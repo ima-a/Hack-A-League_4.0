@@ -1,11 +1,3 @@
-"""
-Responder Agent — SwarmShield
-
-Receives verdict payloads from the Analyzer/Evolver agents and takes
-defensive actions: IP blocking, honeypot redirection, host quarantine,
-and monitoring.  Reports every action back to the Coordinator and Dashboard.
-"""
-
 import json
 import logging
 import os

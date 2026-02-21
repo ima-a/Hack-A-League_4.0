@@ -1,13 +1,3 @@
-"""
-Analyzer Agent
-
-Receives threat observations from Scout agents, builds an attack graph,
-runs Monte Carlo propagation simulations, and produces risk assessments
-that are dispatched to the Responder.
-
-All logic uses Python stdlib only — no external ML libraries required.
-"""
-
 import logging
 import math
 import random

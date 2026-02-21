@@ -1,12 +1,3 @@
-"""
-Scout Agent
-
-Performs network reconnaissance, traffic analysis, and anomaly detection
-using a sliding-window Monte Carlo threat estimator.
-
-All logic is self-contained — no external ML libraries required.
-"""
-
 import logging
 import math
 import os

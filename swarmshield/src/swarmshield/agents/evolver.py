@@ -1,9 +1,3 @@
-"""
-Evolver Agent
-
-Defense strategy optimization using genetic algorithms (DEAP).
-"""
-
 import logging
 from typing import Dict, List, Any
 
