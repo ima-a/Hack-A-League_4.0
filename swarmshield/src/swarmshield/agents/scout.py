@@ -3,9 +3,14 @@ import math
 import os
 import random
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+try:
+    from .llm_client import LLMClient
+except ImportError:
+    LLMClient = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,106 @@ CONFIDENCE_THRESHOLD = 0.60   # report only if top_confidence > this
 WINDOW_SECONDS       = 10     # sliding window width
 N_SIMULATIONS        = 1000   # Monte Carlo trials per IP
 LOG_FILE             = "scout_detections.log"
+
+# ---------------------------------------------------------------------------
+# Rolling inference configuration
+# ---------------------------------------------------------------------------
+ROLLING_HORIZON_SECONDS  = 60    # seconds of packets kept in the rolling buffer
+ROLLING_HISTORY_SIZE     = 10    # number of past MC snapshots tracked per IP
+ROLLING_TICK_SECONDS     = 5     # default interval for run_rolling_inference
+EARLY_WARNING_THRESHOLD  = 0.40  # predicted confidence above this → early_warning
+
+
+# ===========================================================================
+# LLM prompt engineering (Scout)
+# ===========================================================================
+
+_SCOUT_SYSTEM_PROMPT = (
+    "You are a network threat classification assistant embedded in SwarmShield, "
+    "an autonomous cybersecurity defense system.\n\n"
+    "Your ONLY task: given pre-computed statistical anomaly data, return structured "
+    "threat intelligence in the exact JSON schema specified below.\n\n"
+    "CRITICAL CONSTRAINTS — violation will cause system failures:\n"
+    "1. The numerical metrics and Monte Carlo confidence scores in INPUT DATA are "
+    "GROUND TRUTH produced by deterministic algorithms. "
+    "Do NOT contradict, downplay, or inflate any of them.\n"
+    "2. Respond with valid JSON containing ONLY the OUTPUT SCHEMA fields. "
+    "No prose, no markdown, no extra keys.\n"
+    "3. Every enumerated field must use ONLY a value listed in this prompt.\n"
+    "4. When data is ambiguous choose the conservative option "
+    "(lower urgency; 'monitor' over 'block').\n"
+    "5. Do not invent IOCs not directly supported by the observed statistics.\n\n"
+    "ATTACK TAXONOMY — \"attack_subtype\" must be exactly one of:\n"
+    "  SYN_Flood              — elevated pps + elevated syn_count, single destination\n"
+    "  UDP_Flood              — high bps, low syn_count, high pps\n"
+    "  HTTP_Flood             — high pps to port 80/443, low port entropy\n"
+    "  PortScan_Horizontal    — high unique_dest_ips + high port_entropy (>=3.5)\n"
+    "  PortScan_Vertical      — high pps to single IP, sequential ports\n"
+    "  Data_Exfiltration_Bulk — sustained bps >=500000, moderate pps\n"
+    "  Data_Exfiltration_Slow — low bps, anomalously persistent, low pps\n"
+    "  Reconnaissance_ICMP    — low confidence, low pps, ICMP protocol\n"
+    "  Normal                 — no anomalous pattern detected\n\n"
+    "KILL CHAIN STAGES — \"kill_chain_stage\" must be exactly one of:\n"
+    "  Reconnaissance         — scanning or enumeration (PortScan, ICMP sweep)\n"
+    "  Delivery               — sending attack traffic (DDoS / SYN flood onset)\n"
+    "  Exploitation           — actively disrupting service (DDoS at peak)\n"
+    "  Actions_on_Objectives  — exfiltrating or encrypting data\n\n"
+    "RESPONSE ACTIONS — \"recommended_action\" must be exactly one of:\n"
+    "  block                  — immediately drop all traffic from source IP\n"
+    "  rate_limit             — throttle source traffic below safe threshold\n"
+    "  redirect_to_honeypot   — DNAT source traffic to honeypot for analysis\n"
+    "  quarantine             — isolate source from forwarding (both directions)\n"
+    "  monitor                — no enforcement yet; collect more data\n"
+    "  escalate               — action unclear; flag for human review\n\n"
+    "URGENCY SCALE — \"urgency\" must be an integer 1–5:\n"
+    "  5 = Active DDoS or confirmed exfiltration; act immediately\n"
+    "  4 = High-confidence threat; act within 1 minute\n"
+    "  3 = Medium-confidence or early-stage threat; act within 5 minutes\n"
+    "  2 = Low-confidence or ambiguous; add to watchlist\n"
+    "  1 = Normal traffic; no action needed\n\n"
+    "OUTPUT SCHEMA — respond with ONLY this JSON object, no other text:\n"
+    '{\n'
+    '  "attack_subtype":     "<value from taxonomy>",\n'
+    '  "kill_chain_stage":   "<value from stages>",\n'
+    '  "recommended_action": "<value from actions>",\n'
+    '  "urgency":            <int 1-5>,\n'
+    '  "iocs":               ["<indicator>", "<indicator>"],\n'
+    '  "rationale":          "<1-2 sentences based strictly on observed metrics>"\n'
+    '}'
+)
+
+
+def _build_scout_user_message(
+    source_ip:   str,
+    stats:       dict,
+    mc_result:   dict,
+    attack_type: str,
+    agent_id:    str,
+) -> str:
+    """Build the grounded user message fed to the Scout LLM call."""
+    return (
+        f"DETECTED ANOMALY\n"
+        f"source_ip   : {source_ip}\n"
+        f"agent_id    : {agent_id}\n"
+        f"attack_type : {attack_type}  (computed by deterministic algorithm)\n"
+        f"\n"
+        f"TRAFFIC STATISTICS (ground truth — do not contradict):\n"
+        f"  packets_per_second : {stats.get('packets_per_second', 0.0):.2f}\n"
+        f"  bytes_per_second   : {stats.get('bytes_per_second', 0.0):.2f}\n"
+        f"  unique_dest_ips    : {stats.get('unique_dest_ips', 0)}\n"
+        f"  syn_count          : {stats.get('syn_count', 0)}\n"
+        f"  port_entropy       : {stats.get('port_entropy', 0.0):.4f}\n"
+        f"  window_seconds     : {stats.get('window_seconds', 0)}\n"
+        f"\n"
+        f"MONTE CARLO CONFIDENCE SCORES (ground truth — do not contradict):\n"
+        f"  ddos_confidence         : {mc_result.get('ddos_confidence', 0.0):.4f}\n"
+        f"  port_scan_confidence    : {mc_result.get('port_scan_confidence', 0.0):.4f}\n"
+        f"  exfiltration_confidence : {mc_result.get('exfiltration_confidence', 0.0):.4f}\n"
+        f"  top_threat              : {mc_result.get('top_threat', 'unknown')}\n"
+        f"  top_confidence          : {mc_result.get('top_confidence', 0.0):.4f}\n"
+        f"\n"
+        f"Provide structured threat intelligence for this anomaly."
+    )
 
 
 # ===========================================================================
@@ -263,6 +368,105 @@ def _simulate_packets(window_seconds: int = WINDOW_SECONDS) -> list:
     return packets
 
 
+def _compute_trend(history: List[dict]) -> dict:
+    """
+    Compute the confidence trend from a list of per-tick MC snapshot dicts.
+    Each dict must have ``top_confidence`` (float) and ``tick_time`` (epoch float).
+
+    Uses simple linear regression over the history to estimate the rate of change
+    and extrapolate one tick into the future.
+
+    Returns
+    -------
+    dict with keys:
+        trend_direction      : "rising" | "falling" | "stable"
+        confidence_slope     : change in confidence per second (float)
+        predicted_confidence : extrapolated confidence at the next tick (float [0,1])
+    """
+    if not history:
+        return {"trend_direction": "stable", "confidence_slope": 0.0,
+                "predicted_confidence": 0.0}
+    if len(history) == 1:
+        return {"trend_direction": "stable", "confidence_slope": 0.0,
+                "predicted_confidence": history[0]["top_confidence"]}
+
+    xs = [h["tick_time"]      for h in history]
+    ys = [h["top_confidence"] for h in history]
+    n  = len(xs)
+    xm = sum(xs) / n
+    ym = sum(ys) / n
+
+    denom = sum((x - xm) ** 2 for x in xs)
+    slope = (
+        sum((xs[i] - xm) * (ys[i] - ym) for i in range(n)) / denom
+        if denom != 0.0 else 0.0
+    )
+
+    # Estimate the gap between ticks and project one step ahead
+    tick_gap  = (xs[-1] - xs[0]) / max(n - 1, 1)
+    next_tick = xs[-1] + tick_gap
+    predicted = max(0.0, min(1.0, ym + slope * (next_tick - xm)))
+
+    direction = (
+        "rising"  if slope >  0.005 else
+        "falling" if slope < -0.005 else
+        "stable"
+    )
+    return {
+        "trend_direction":      direction,
+        "confidence_slope":     round(slope, 6),
+        "predicted_confidence": round(predicted, 4),
+    }
+
+
+def _rolling_alert_level(
+    current_conf: float,
+    predicted_conf: float,
+    confirmed_threshold: float = CONFIDENCE_THRESHOLD,
+    early_warning_threshold: float = EARLY_WARNING_THRESHOLD,
+) -> str:
+    """
+    Map (current, predicted) confidence to an alert level.
+
+    Returns
+    -------
+    str
+        "confirmed"     — current confidence already at or above detection threshold.
+        "early_warning" — not yet confirmed but projected to cross in next tick.
+        "elevated"      — projected above early-warning threshold but not confirmed.
+        "normal"        — no immediate concern.
+    """
+    if current_conf >= confirmed_threshold:
+        return "confirmed"
+    if predicted_conf >= confirmed_threshold:
+        return "early_warning"
+    if predicted_conf >= early_warning_threshold:
+        return "elevated"
+    return "normal"
+
+
+def _llm_enrich_detection(
+    source_ip:   str,
+    stats:       dict,
+    mc_result:   dict,
+    attack_type: str,
+    agent_id:    str,
+    llm_client,          # Optional[LLMClient] — avoid forward-ref issues
+) -> Optional[dict]:
+    """
+    Call the LLM to enrich a detected anomaly with structured threat intelligence.
+
+    Returns None (silently) if the LLM client is unavailable or the API call
+    fails.  Never raises.
+    """
+    if llm_client is None or not llm_client.available:
+        return None
+    user_msg = _build_scout_user_message(
+        source_ip, stats, mc_result, attack_type, agent_id
+    )
+    return llm_client.complete(_SCOUT_SYSTEM_PROMPT, user_msg)
+
+
 # ===========================================================================
 # ScoutAgent
 # ===========================================================================
@@ -277,15 +481,23 @@ class ScoutAgent:
     - Run Monte Carlo threat estimation
     - Surface anomalies and format threat reports
     - Log detections to file
+    - Continuous rolling inference: maintain a time-bounded packet buffer,
+      track per-IP confidence history, compute trends, and issue early
+      warnings before a threat crosses the hard detection threshold
     """
 
     def __init__(self, name: str = "Scout", agent_id: str = "scout-1",
-                 log_file: str = LOG_FILE, thresholds: Optional[dict] = None):
-        self.name       = name
-        self.agent_id   = agent_id
-        self.log_file   = log_file
-        self.thresholds = thresholds or {}
-        self.logger     = logging.getLogger(f"{__name__}.{name}")
+                 log_file: str = LOG_FILE, thresholds: Optional[dict] = None,
+                 llm_client: Optional["LLMClient"] = None):
+        self.name        = name
+        self.agent_id    = agent_id
+        self.log_file    = log_file
+        self.thresholds  = thresholds or {}
+        self.logger      = logging.getLogger(f"{__name__}.{name}")
+        self._llm_client = llm_client          # Optional LLM enrichment layer
+        # Rolling inference state
+        self._packet_buffer:  deque = deque()   # time-bounded packet buffer
+        self._belief_history: Dict[str, deque] = {}  # per-IP MC snapshot history
 
     # ------------------------------------------------------------------
     # Public API
@@ -394,14 +606,195 @@ class ScoutAgent:
                 report = _format_report(ip, stats, mc, self.agent_id)
                 _log_detection(ip, report["attack_type"], mc["top_confidence"],
                                self.log_file)
+                llm_insight = _llm_enrich_detection(
+                    ip, stats, mc, report["attack_type"],
+                    self.agent_id, self._llm_client,
+                )
+                if llm_insight:
+                    report["llm_insight"] = llm_insight
                 threats.append(report)
                 self.logger.info(
-                    "ANOMALY: %s  →  %s (conf=%.2f)",
+                    "ANOMALY: %s  →  %s (conf=%.2f)%s",
                     ip, report["attack_type"], mc["top_confidence"],
+                    "  [LLM enriched]" if llm_insight else "",
                 )
 
         self.logger.info("Detection cycle complete: %d threat(s) found.", len(threats))
         return threats
+
+    def rolling_tick(
+        self,
+        new_packets: List[Dict],
+        horizon_seconds: float = ROLLING_HORIZON_SECONDS,
+    ) -> Dict[str, Any]:
+        """
+        Single-step rolling inference update.
+
+        Adds *new_packets* to the internal rolling buffer, trims packets older
+        than *horizon_seconds*, recomputes per-IP stats and Monte Carlo scores,
+        updates per-IP belief history, derives confidence trends, and raises
+        early warnings before the hard detection threshold is crossed.
+
+        This is the anticipatory core: even if a source IP has not yet
+        crossed CONFIDENCE_THRESHOLD, a rising trend whose extrapolated
+        confidence will cross it triggers an ``'early_warning'`` alert.
+
+        Parameters
+        ----------
+        new_packets : list of dict
+            Fresh packet metadata (same schema as capture_packets()).
+        horizon_seconds : float
+            Width of the rolling time window to retain in the buffer.
+
+        Returns
+        -------
+        dict
+            {
+              "tick_time"        : float (epoch seconds),
+              "buffer_size"      : int   (packets currently in buffer),
+              "per_ip"           : {
+                  "<ip>": {
+                      "stats":                {...},
+                      "monte_carlo":          {...},
+                      "trend":                {trend_direction, confidence_slope,
+                                               predicted_confidence},
+                      "alert_level":          "confirmed"|"early_warning"|"elevated"|"normal",
+                      "current_confidence":   float,
+                      "predicted_confidence": float,
+                  }, ...
+              },
+              "early_warnings"   : [list of IPs at alert_level 'early_warning'],
+              "confirmed_threats": [list of IPs at alert_level 'confirmed'],
+            }
+        """
+        tick_time = time.time()
+        cutoff    = tick_time - horizon_seconds
+
+        # Extend buffer, drop stale packets
+        self._packet_buffer.extend(new_packets)
+        while self._packet_buffer and self._packet_buffer[0].get("timestamp", 0) < cutoff:
+            self._packet_buffer.popleft()
+
+        buffered = list(self._packet_buffer)
+        src_ips  = _get_all_source_ips(buffered) if buffered else []
+
+        per_ip:            Dict[str, Any] = {}
+        early_warnings:    List[str]      = []
+        confirmed_threats: List[str]      = []
+
+        for ip in src_ips:
+            stats = _compute_stats(buffered, ip, int(max(horizon_seconds, 1)))
+            mc    = _monte_carlo_estimate(stats, thresholds=self.thresholds)
+
+            # Update per-IP belief history
+            if ip not in self._belief_history:
+                self._belief_history[ip] = deque(maxlen=ROLLING_HISTORY_SIZE)
+            self._belief_history[ip].append({
+                "top_confidence": mc["top_confidence"],
+                "top_threat":     mc["top_threat"],
+                "tick_time":      tick_time,
+            })
+
+            trend     = _compute_trend(list(self._belief_history[ip]))
+            cur_conf  = mc["top_confidence"]
+            pred_conf = trend["predicted_confidence"]
+            level     = _rolling_alert_level(cur_conf, pred_conf)
+
+            per_ip[ip] = {
+                "stats":                stats,
+                "monte_carlo":          mc,
+                "trend":                trend,
+                "alert_level":          level,
+                "current_confidence":   round(cur_conf,  4),
+                "predicted_confidence": round(pred_conf, 4),
+            }
+
+            # LLM enrichment for actionable alert levels (early_warning / confirmed)
+            if level in ("early_warning", "confirmed"):
+                llm_insight = _llm_enrich_detection(
+                    ip, stats, mc, mc["top_threat"],
+                    self.agent_id, self._llm_client,
+                )
+                if llm_insight:
+                    per_ip[ip]["llm_insight"] = llm_insight
+
+            if level == "early_warning":
+                early_warnings.append(ip)
+                self.logger.warning(
+                    "EARLY WARNING: %s  →  %s  current=%.2f  predicted=%.2f  trend=%s",
+                    ip, mc["top_threat"], cur_conf, pred_conf, trend["trend_direction"],
+                )
+            elif level == "confirmed":
+                confirmed_threats.append(ip)
+                self.logger.warning(
+                    "CONFIRMED THREAT: %s  →  %s  confidence=%.2f",
+                    ip, mc["top_threat"], cur_conf,
+                )
+            else:
+                self.logger.debug(
+                    "rolling_tick: %s  level=%s  conf=%.2f  predicted=%.2f",
+                    ip, level, cur_conf, pred_conf,
+                )
+
+        return {
+            "tick_time":         tick_time,
+            "buffer_size":       len(buffered),
+            "per_ip":            per_ip,
+            "early_warnings":    early_warnings,
+            "confirmed_threats": confirmed_threats,
+        }
+
+    def run_rolling_inference(
+        self,
+        tick_seconds:    float = ROLLING_TICK_SECONDS,
+        horizon_seconds: float = ROLLING_HORIZON_SECONDS,
+        n_ticks:         Optional[int] = None,
+        on_tick:         Optional[Any] = None,
+    ) -> None:
+        """
+        Continuous rolling inference loop.
+
+        Every *tick_seconds*, captures a fresh packet window and calls
+        ``rolling_tick()`` to update beliefs, compute trends, and surface
+        early warnings *before* confidence fully crosses the hard threshold.
+
+        Parameters
+        ----------
+        tick_seconds : float
+            Interval between inference ticks (default: 5 s).
+        horizon_seconds : float
+            Rolling buffer width (default: 60 s).
+        n_ticks : int or None
+            Stop after this many ticks; ``None`` runs indefinitely until
+            interrupted by KeyboardInterrupt.
+        on_tick : callable or None
+            Optional callback invoked with the ``rolling_tick()`` result dict
+            after each tick.  Signature: ``on_tick(result: dict) -> None``.
+        """
+        self.logger.info(
+            "Starting rolling inference (tick=%.1fs, horizon=%.1fs)…",
+            tick_seconds, horizon_seconds,
+        )
+        tick = 0
+        try:
+            while n_ticks is None or tick < n_ticks:
+                new_packets = self.capture_packets(window_seconds=int(tick_seconds))
+                result      = self.rolling_tick(new_packets,
+                                               horizon_seconds=horizon_seconds)
+                ew = len(result["early_warnings"])
+                ct = len(result["confirmed_threats"])
+                self.logger.info(
+                    "Tick %d — buffer=%d pkts  early_warnings=%d  confirmed=%d",
+                    tick + 1, result["buffer_size"], ew, ct,
+                )
+                if on_tick is not None:
+                    on_tick(result)
+                tick += 1
+                if n_ticks is None or tick < n_ticks:
+                    time.sleep(tick_seconds)
+        except KeyboardInterrupt:
+            self.logger.info("Rolling inference interrupted by user.")
+        self.logger.info("Rolling inference stopped after %d tick(s).", tick)
 
     # ------------------------------------------------------------------
     # Expose internal utilities so tests / downstream code can call them
@@ -436,3 +829,21 @@ class ScoutAgent:
                       log_file: str = LOG_FILE) -> None:
         """Append a detection record to the log file."""
         _log_detection(source_ip, attack_type, confidence, log_file)
+
+    @staticmethod
+    def compute_trend(history: List[dict]) -> dict:
+        """Confidence trend from a list of per-tick MC snapshot dicts."""
+        return _compute_trend(history)
+
+    @staticmethod
+    def rolling_alert_level(
+        current_conf: float,
+        predicted_conf: float,
+        confirmed_threshold: float = CONFIDENCE_THRESHOLD,
+        early_warning_threshold: float = EARLY_WARNING_THRESHOLD,
+    ) -> str:
+        """Map (current, predicted) confidence to an alert level string."""
+        return _rolling_alert_level(
+            current_conf, predicted_conf,
+            confirmed_threshold, early_warning_threshold,
+        )

@@ -1,2 +1,0 @@
-2026-02-21T12:29:29Z | source_ip=192.168.1.55 | attack=DDoS | confidence=0.9200
-2026-02-21T12:29:29Z | source_ip=10.10.10.10 | attack=PortScan | confidence=0.7500

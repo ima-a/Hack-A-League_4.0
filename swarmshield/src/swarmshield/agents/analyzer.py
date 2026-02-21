@@ -5,6 +5,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    from .llm_client import LLMClient
+except ImportError:
+    LLMClient = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -14,6 +19,92 @@ PROPAGATION_BASE = 0.4   # base probability an attacker moves to a neighbour
 N_SIM_TRIALS     = 500   # Monte Carlo trials for propagation simulation
 RISK_HIGH        = 0.70
 RISK_MEDIUM      = 0.40
+
+
+# ===========================================================================
+# LLM prompt engineering (Analyzer)
+# ===========================================================================
+
+_ANALYZER_SYSTEM_PROMPT = (
+    "You are a threat correlation and attack-graph analysis assistant embedded in "
+    "SwarmShield, an autonomous cybersecurity defense system.\n\n"
+    "Your ONLY task: given pre-computed threat-graph data, Monte Carlo propagation "
+    "results, and risk assessment outputs, return structured correlation intelligence "
+    "in the exact JSON schema specified below.\n\n"
+    "CRITICAL CONSTRAINTS — violation will cause system failures:\n"
+    "1. All node counts, edge counts, confidence scores, spread metrics, and risk "
+    "scores in the input are GROUND TRUTH from deterministic algorithms. "
+    "Do NOT contradict them.\n"
+    "2. Respond with valid JSON containing ONLY the OUTPUT SCHEMA fields. "
+    "No prose, no extra keys.\n"
+    "3. Use ONLY the enumerated values specified. No freeform choices.\n"
+    "4. Do not invent IP addresses or threat types absent from the input.\n"
+    "5. If avg_spread < 0.30 and risk_score < 0.40, lateral_movement_risk "
+    "MUST NOT be 'high'.\n\n"
+    "THREAT CORRELATION RULES — \"threat_correlation\" must be one of:\n"
+    "  coordinated — two or more nodes share same threat_type "
+    "AND both confidence >= 0.70\n"
+    "  independent — nodes have different threat types OR large confidence gap\n"
+    "  unclear     — single node, or insufficient data to determine\n\n"
+    "VALID ACTIONS (for recommended_actions[*].action):\n"
+    "  block                 — iptables DROP all traffic from source IP\n"
+    "  rate_limit            — throttle source traffic\n"
+    "  redirect_to_honeypot  — DNAT source to honeypot\n"
+    "  quarantine            — FORWARD DROP both directions\n"
+    "  monitor               — observe only, no enforcement\n"
+    "  escalate              — requires human review\n\n"
+    "LATERAL MOVEMENT RISK — apply these thresholds strictly:\n"
+    "  high   — avg_spread >= 0.60 OR (risk_score >= 0.70 AND edge_count >= 2)\n"
+    "  medium — avg_spread >= 0.30 OR risk_score >= 0.40\n"
+    "  low    — avg_spread > 0.0  OR risk_score > 0.0\n"
+    "  none   — avg_spread = 0.0  AND edge_count = 0\n\n"
+    "OUTPUT SCHEMA — respond with ONLY this JSON object, no other text:\n"
+    '{\n'
+    '  "threat_correlation":    "<coordinated|independent|unclear>",\n'
+    '  "attack_chain_summary":  "<1-2 sentence factual description>",\n'
+    '  "lateral_movement_risk": "<high|medium|low|none>",\n'
+    '  "escalation_needed":     <true|false>,\n'
+    '  "containment_priority":  ["<ip>", ...],\n'
+    '  "recommended_actions": [\n'
+    '    { "ip": "<ip>", "action": "<action>", "reason": "<one sentence>" }\n'
+    '  ]\n'
+    '}'
+)
+
+
+def _build_analyzer_user_message(
+    graph_summary: dict,
+    top_threats:   list,
+    sim_results:   list,
+    assessment:    dict,
+    agent_name:    str,
+) -> str:
+    """Build the grounded user message fed to the Analyzer LLM call."""
+    import json as _json
+    return (
+        f"THREAT GRAPH ANALYSIS\n"
+        f"agent: {agent_name}\n"
+        f"\n"
+        f"GRAPH SUMMARY (ground truth):\n"
+        f"  node_count     : {graph_summary.get('node_count', 0)}\n"
+        f"  edge_count     : {graph_summary.get('edge_count', 0)}\n"
+        f"  attack_types   : {graph_summary.get('attack_types', [])}\n"
+        f"  max_confidence : {graph_summary.get('max_confidence', 0.0):.4f}\n"
+        f"\n"
+        f"TOP THREATS (ground truth, sorted by confidence desc):\n"
+        f"{_json.dumps(top_threats[:5], indent=2)}\n"
+        f"\n"
+        f"PROPAGATION SIMULATION (ground truth):\n"
+        f"  trials_run : {len(sim_results)}\n"
+        f"  avg_spread : {assessment.get('avg_spread', 0.0):.4f}\n"
+        f"  max_spread : {assessment.get('max_spread', 0.0):.4f}\n"
+        f"\n"
+        f"RISK ASSESSMENT (ground truth):\n"
+        f"  risk_level : {assessment.get('risk_level', 'none')}\n"
+        f"  risk_score : {assessment.get('risk_score', 0.0):.4f}\n"
+        f"\n"
+        f"Provide threat correlation analysis and ranked containment recommendations."
+    )
 
 
 # ===========================================================================
@@ -255,6 +346,34 @@ def _aggregate_risk(
     }
 
 
+def _llm_enrich_risk(
+    nodes:       List[dict],
+    sim_results: list,
+    assessment:  dict,
+    agent_name:  str,
+    llm_client,          # Optional[LLMClient]
+) -> Optional[dict]:
+    """
+    Call the LLM to enrich a risk assessment with threat correlation intelligence.
+    Returns None (silently) if the client is unavailable or the API call fails.
+    """
+    if llm_client is None or not llm_client.available:
+        return None
+    attack_types = sorted({n["threat_type"] for n in nodes})
+    max_conf     = max((n["confidence"] for n in nodes), default=0.0)
+    graph_summary = {
+        "node_count":     len(nodes),
+        "edge_count":     0,   # not in scope at assess_risk call site
+        "attack_types":   attack_types,
+        "max_confidence": round(max_conf, 4),
+    }
+    top_threats = assessment.get("top_threats", [])
+    user_msg = _build_analyzer_user_message(
+        graph_summary, top_threats, sim_results, assessment, agent_name,
+    )
+    return llm_client.complete(_ANALYZER_SYSTEM_PROMPT, user_msg)
+
+
 # ===========================================================================
 # AnalyzerAgent
 # ===========================================================================
@@ -270,9 +389,10 @@ class AnalyzerAgent:
     - Produce actionable recommendations for the Responder
     """
 
-    def __init__(self, name: str = "Analyzer"):
-        self.name   = name
-        self.logger = logging.getLogger(f"{__name__}.{name}")
+    def __init__(self, name: str = "Analyzer", llm_client=None):
+        self.name        = name
+        self.logger      = logging.getLogger(f"{__name__}.{name}")
+        self._llm_client = llm_client   # Optional LLM enrichment layer
 
     def model_threat_graph(self, observations: List[Dict]) -> Dict[str, Any]:
         """
@@ -372,4 +492,14 @@ class AnalyzerAgent:
             "Risk assessment: level=%s, score=%.4f",
             assessment["risk_level"], assessment["risk_score"],
         )
+        llm_insight = _llm_enrich_risk(
+            nodes, sims, assessment, self.name, self._llm_client,
+        )
+        if llm_insight:
+            assessment["llm_insight"] = llm_insight
+            self.logger.info(
+                "Risk assessment LLM insight: correlation=%s, lateral_risk=%s",
+                llm_insight.get("threat_correlation", "?"),
+                llm_insight.get("lateral_movement_risk", "?"),
+            )
         return assessment

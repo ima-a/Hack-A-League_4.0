@@ -5,6 +5,12 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Optional
+
+try:
+    from .llm_client import LLMClient as _LLMClient
+except ImportError:
+    _LLMClient = None  # type: ignore[assignment,misc]
 
 import requests
 from flask import Flask, jsonify, request
@@ -379,6 +385,94 @@ def start_auto_unblock_thread() -> None:
 
 
 # ===========================================================================
+# LLM prompt engineering (Responder)
+# ===========================================================================
+
+_RESPONDER_SYSTEM_PROMPT = (
+    "You are a defensive action validation assistant embedded in SwarmShield, "
+    "an autonomous cybersecurity defense system.\n\n"
+    "Your ONLY task: validate a proposed defensive action produced by a deterministic "
+    "decision engine, or flag it for human review.\n\n"
+    "CRITICAL CONSTRAINTS — violation will cause system failures:\n"
+    "1. The verdict data (source_ip, attack_type, confidence) and proposed_action "
+    "below come from a deterministic decision engine with correct priority logic applied.\n"
+    "2. Default to validating the proposed action (action_validated: true, "
+    "action_override: null) unless you identify a specific, concrete risk.\n"
+    "3. Respond with valid JSON containing ONLY the OUTPUT SCHEMA fields. "
+    "No prose, no extra keys.\n"
+    "4. Do not invent network context not present in the input.\n"
+    "5. Use ONLY the enumerated values specified for action fields.\n\n"
+    "VALID ACTIONS (for action_override — null if validated):\n"
+    "  block                 — iptables DROP all traffic from source IP\n"
+    "  rate_limit            — throttle source traffic below safe threshold\n"
+    "  redirect_to_honeypot  — DNAT source traffic to honeypot\n"
+    "  quarantine            — FORWARD DROP both directions\n"
+    "  monitor               — no enforcement; logging only\n"
+    "  escalate              — flag for human review\n\n"
+    "COLLATERAL RISK GUIDELINES — \"collateral_risk\" must be one of:\n"
+    "  high   — IP may be a shared gateway, CDN node, or internal corporate host\n"
+    "  medium — single external host but confidence < 0.80\n"
+    "  low    — confirmed single external attacker with confidence >= 0.80\n\n"
+    "ESCALATION TRIGGERS — set escalation_needed: true if any apply:\n"
+    "  • confidence < 0.50 AND proposed action is 'block' or 'quarantine'\n"
+    "  • attack_type is 'Normal' or unknown\n"
+    "  • action_override is not null (human should review the override)\n\n"
+    "OUTPUT SCHEMA — respond with ONLY this JSON object, no other text:\n"
+    '{\n'
+    '  "action_validated":   <true|false>,\n'
+    '  "action_override":    "<action>" or null,\n'
+    '  "risk_justification": "<1 sentence based strictly on input data>",\n'
+    '  "collateral_risk":    "<high|medium|low>",\n'
+    '  "escalation_needed":  <true|false>\n'
+    '}'
+)
+
+# Module-level LLM client (set at startup via init_responder_llm)
+_responder_llm: Optional["_LLMClient"] = None   # type: ignore[valid-type]
+
+
+def init_responder_llm(client) -> None:
+    """Set the module-level LLM client for the Responder agent."""
+    global _responder_llm
+    _responder_llm = client
+    logger.info("Responder LLM client initialised (model=%s).",
+                getattr(client, "model", "unknown"))
+
+
+def _llm_validate_action(
+    verdict:        dict,
+    proposed_action: str,
+    llm_client,
+) -> Optional[dict]:
+    """
+    Call the LLM to validate a proposed defensive action before execution.
+    Returns None (silently) if the client is unavailable or the call fails.
+    """
+    if llm_client is None or not llm_client.available:
+        return None
+    source_ip   = verdict.get("source_ip",             "unknown")
+    attack_type = verdict.get("predicted_attack_type", "unknown")
+    confidence  = float(verdict.get("confidence",      0.0))
+    recommended = verdict.get("recommended_action",    "monitor")
+    user_msg = (
+        f"DEFENSIVE ACTION VALIDATION REQUEST\n"
+        f"source_ip          : {source_ip}\n"
+        f"predicted_attack   : {attack_type}\n"
+        f"confidence         : {confidence:.4f}  (algorithm-computed, ground truth)\n"
+        f"recommended_action : {recommended}  (from upstream Analyzer)\n"
+        f"proposed_action    : {proposed_action}  (selected by decision engine)\n"
+        f"\n"
+        f"Decision engine priority logic applied:\n"
+        f"  1. Explicit recommended_action takes precedence.\n"
+        f"  2. Attack-type fallback applies when no explicit recommendation.\n"
+        f"\n"
+        f"Validate the proposed_action. Only suggest an override if you "
+        f"can identify a specific, concrete risk not addressed by the current action."
+    )
+    return llm_client.complete(_RESPONDER_SYSTEM_PROMPT, user_msg)
+
+
+# ===========================================================================
 # Flask routes
 # ===========================================================================
 
@@ -406,13 +500,17 @@ def verdict_endpoint():
     action, success = decide_and_act(data)
     report_action_async(data["source_ip"], action, success)
 
-    return jsonify({
+    response_body = {
         "status":       "ok",
         "action_taken": action,
         "success":      success,
         "agent_id":     AGENT_ID,
         "timestamp":    _now_iso(),
-    }), 200
+    }
+    llm_validation = _llm_validate_action(data, action, _responder_llm)
+    if llm_validation:
+        response_body["llm_validation"] = llm_validation
+    return jsonify(response_body), 200
 
 
 @app.route("/health", methods=["GET"])

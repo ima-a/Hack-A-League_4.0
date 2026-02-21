@@ -10,10 +10,8 @@ __description__ = "Autonomous network defense using CrewAI agents"
 
 from . import agents
 from . import tools
-from . import utils
 
 __all__ = [
     "agents",
     "tools",
-    "utils",
 ]
