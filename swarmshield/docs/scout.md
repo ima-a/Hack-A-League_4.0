@@ -79,36 +79,74 @@ Report schema:
 
 ## Public API (ScoutAgent)
 ### `ScoutAgent.capture_packets(window_seconds=WINDOW_SECONDS) -> list[dict]`
-Returns a single window of packet metadata.
+# Scout Agent
 
-### `ScoutAgent.scan_network(window_seconds=WINDOW_SECONDS) -> dict`
-Runs a full scan cycle and returns:
-```json
-{
-  "source_ips": ["..."],
-  "findings": {
-    "<ip>": {
-      "stats": {"...": "..."},
-      "monte_carlo": {"...": "..."},
-      "threat_level": "high|medium|low|normal"
-    }
-  },
-  "timestamp": "..."
-}
-```
+Source: `src/swarmshield/agents/scout.py`
 
-### `ScoutAgent.detect_anomalies(window_seconds=WINDOW_SECONDS, confidence_threshold=CONFIDENCE_THRESHOLD) -> list[dict]`
-Returns a list of threat reports for sources whose `top_confidence` exceeds the threshold and are not `normal`.
+## What it does
+The Scout Agent detects suspicious behavior per source IP.
 
-### Static helpers (exposed for tests / downstream code)
-- `compute_stats(packets, source_ip, window_seconds)`
-- `get_all_source_ips(packets)`
-- `monte_carlo_estimate(stats, n_simulations, thresholds=None)`
-- `format_report(source_ip, stats, mc_result, agent_id)`
-- `log_detection(source_ip, attack_type, confidence, log_file)`
+It has two complementary modes:
+1. **Single-window detection**: compute features for one time window and run a Monte Carlo ruleset to classify likely threats.
+2. **Rolling inference (early warning)**: maintain a rolling packet buffer and track per-IP confidence trends to warn *before* the hard detection threshold is crossed.
+
+Outputs are **threat observation reports** that are meant to feed into the Analyzer.
+
+## Packet metadata schema
+Scout operates on a list of dicts where each “packet” has:
+- `src_ip` (str)
+- `dst_ip` (str)
+- `dst_port` (int)
+- `protocol` (str)
+- `size` (int bytes)
+- `timestamp` (float epoch seconds)
+- `is_syn` (bool)
+
+In this repo, `capture_packets()` generates realistic synthetic traffic so the pipeline runs without root privileges or live capture.
+
+## Detection logic (single window)
+1. Capture packets (`capture_packets`).
+2. Compute per-source statistics (`compute_stats`).
+3. Run Monte Carlo estimation (`monte_carlo_estimate`).
+4. Format a report (`format_report`) and optionally log (`log_detection`).
+
+Threat rules scored (confidence is the fraction of Monte Carlo trials that trigger):
+- **DDoS**: packets/sec or SYN count high
+- **PortScan**: many unique destinations or high destination-port entropy
+- **Exfiltration**: bytes/sec high
+
+## Rolling inference (early warning)
+Rolling inference tracks confidence history per IP and extrapolates a short-term trend.
+
+- `rolling_tick(new_packets, horizon_seconds=...)`:
+  - updates the internal time-bounded buffer
+  - recomputes per-IP Monte Carlo confidence
+  - computes a trend (direction + slope + predicted confidence)
+  - assigns an `alert_level`:
+    - `confirmed` (current confidence crosses hard threshold)
+    - `early_warning` (predicted confidence crosses early-warning threshold)
+    - `elevated` / `normal`
+- `run_rolling_inference(...)` runs `rolling_tick()` in a loop.
+
+This is intentionally conservative: it provides “heads up” signals without replacing the deterministic confidence scores.
+
+## Optional LLM enrichment (Grok)
+Scout can attach an `llm_insight` JSON object to:
+- a threat report returned by `detect_anomalies()`
+- a per-IP entry in `rolling_tick()` when the alert level is `early_warning` or `confirmed`
+
+This is an *enrichment* layer only: core detection remains deterministic.
+
+How to enable:
+- Set `XAI_API_KEY` (and optionally `LLM_MODEL`, `LLM_TEMPERATURE`) in your environment.
+- Construct an `LLMClient` and pass it into `ScoutAgent(llm_client=...)`.
+
+## Public API
+- `capture_packets(window_seconds=...) -> list[dict]`
+- `scan_network(window_seconds=...) -> dict`
+- `detect_anomalies(window_seconds=..., confidence_threshold=...) -> list[dict]`
+- `rolling_tick(new_packets, horizon_seconds=...) -> dict`
+- `run_rolling_inference(tick_seconds=..., horizon_seconds=..., n_ticks=..., on_tick=...) -> None`
 
 ## How to see it working
-Run the smoke test:
-- `tests/run_scout_agent.py`
-
-It feeds synthetic packets, prints computed stats, the Monte Carlo scores, the formatted report, and the scan/anomaly outputs.
+Run `tests/run_scout_agent.py`.

@@ -30,7 +30,7 @@ logger = logging.getLogger("responder")
 COORDINATOR_IP   = os.environ.get("COORDINATOR_IP",   "192.168.1.100")
 HONEYPOT_IP      = os.environ.get("HONEYPOT_IP",      "192.168.1.99")
 RESPONDER_PORT   = int(os.environ.get("RESPONDER_PORT", 5003))
-AGENT_ID         = "responder-1"
+AGENT_ID         = os.environ.get("RESPONDER_ID", "responder-1")
 
 # Paths (project root = four levels up from this file)
 _HERE        = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +39,24 @@ BLOCKED_IPS_FILE   = os.path.join(PROJECT_ROOT, "blocked_ips.txt")
 ACTIONS_LOG_FILE   = os.path.join(PROJECT_ROOT, "responder_actions.log")
 
 # Auto-unblock window (seconds)
-AUTO_UNBLOCK_SECONDS = 5 * 60   # 5 minutes
+# Env priority: AUTO_UNBLOCK_SECONDS > AUTO_UNBLOCK_MINUTES > default (5 min)
+def _auto_unblock_seconds() -> int:
+    raw = (os.environ.get("AUTO_UNBLOCK_SECONDS") or "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    raw_m = (os.environ.get("AUTO_UNBLOCK_MINUTES") or "").strip()
+    if raw_m:
+        try:
+            return max(0, int(raw_m) * 60)
+        except ValueError:
+            pass
+    return 5 * 60
+
+
+AUTO_UNBLOCK_SECONDS = _auto_unblock_seconds()
 
 # ---------------------------------------------------------------------------
 # Flask app
@@ -524,5 +541,16 @@ def health():
 # ===========================================================================
 
 if __name__ == "__main__":
+    # Optional: initialise LLM action validation when a Grok key is present.
+    if _LLMClient is not None:
+        try:
+            _model = (os.environ.get("LLM_MODEL") or "grok-2-1212").strip()
+            _temp  = float((os.environ.get("LLM_TEMPERATURE") or "0.0").strip())
+            _client = _LLMClient(model=_model, temperature=_temp)
+            if getattr(_client, "available", False):
+                init_responder_llm(_client)
+        except Exception as _exc:  # noqa: BLE001
+            logger.info("Responder LLM init skipped: %s", _exc)
+
     start_auto_unblock_thread()
     app.run(host="0.0.0.0", port=RESPONDER_PORT)

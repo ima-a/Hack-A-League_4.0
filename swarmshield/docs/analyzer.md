@@ -18,83 +18,71 @@ The Analyzer expects a list of dicts; each dict typically includes:
 - `confidence`
 - `monte_carlo` (optional)
 - `agent_id` (optional)
-- `timestamp` (optional)
+# Analyzer Agent
 
-## Key sections in the implementation
-### 1) Constants
-- `N_SIM_TRIALS`: number of Monte Carlo propagation trials
-- `RISK_HIGH`, `RISK_MEDIUM`: score thresholds for risk levels
+Source: `src/swarmshield/agents/analyzer.py`
 
-### 2) Node building (`_build_nodes`)
-`_build_nodes(observations)` deduplicates by `source_ip` and keeps the *highest-confidence* record per IP.
+## What it does
+The Analyzer Agent turns many Scout observations into a correlation-oriented output:
+1. Build a **threat graph** (nodes = source IPs; edges = inferred coordination).
+2. Run **Monte Carlo propagation simulation** over that graph.
+3. Produce a **risk assessment**: severity level, risk score, spread metrics, and recommended actions.
 
-Node shape:
+This output is intended to drive the Responder.
+
+## Inputs
+Analyzer expects a list of Scout-style observation dicts. Common fields:
+- `source_ip`
+- `attack_type` (e.g. `DDoS`, `PortScan`, `Exfiltration`)
+- `confidence` (0.0–1.0)
+- optional: `monte_carlo`, `agent_id`, `timestamp`
+
+## Threat graph
+### Nodes
+Nodes are deduplicated by `source_ip`; the highest-confidence observation for that IP wins.
+
+Node keys:
 - `ip`
 - `threat_type`
 - `confidence`
-- `monte_carlo`
-- `agent_id`
-- `timestamp`
+- `monte_carlo` (optional passthrough)
+- `agent_id`, `timestamp`
 
-### 3) Edge building (`_build_edges`)
-Edges are inferred between pairs of nodes when:
-- They share the same `threat_type`, and
-- Both have `confidence > 0.50`
+### Edges
+Edges are inferred when two nodes:
+- share the same `threat_type`, and
+- both have `confidence > 0.50`
 
 Edge weight is the average confidence.
 
-Edge shape:
-- `src`, `dst`
-- `threat_type`
-- `weight`
+## Propagation simulation
+Each trial:
+1. Picks an entry node weighted by node confidence.
+2. Attempts to traverse edges with probability based on edge weight (plus small noise).
+3. Records the number of nodes reached and the compromised IP list.
 
-### 4) Graph summary (`_graph_summary`)
-Provides:
-- `node_count`, `edge_count`
-- `attack_types`
-- `max_confidence`
+Per-trial result keys: `trial`, `entry_node`, `nodes_reached`, `path_length`, `compromised_ips`.
 
-### 5) Propagation simulation (`_run_propagation_simulation`)
-Runs Monte Carlo trials that:
-1. Pick an entry node (weighted by confidence).
-2. Attempt to traverse edges to neighbors with probability based on edge `weight` (plus small noise).
-3. Record which nodes were reached.
+## Risk scoring
+The aggregate risk score combines confidence and spread:
 
-Per-trial result shape:
-- `trial`
-- `entry_node`
-- `nodes_reached`
-- `path_length`
-- `compromised_ips`
+$$\text{risk\_score} = \min(1, 0.6 \cdot \max\_\text{confidence} + 0.4 \cdot \text{avg\_spread})$$
 
-### 6) Risk aggregation (`_aggregate_risk`)
-Computes:
-- `avg_spread`: average fraction of graph reached per trial
-- `max_spread`
-- `risk_score`: combines max confidence and average spread
-- `risk_level`: `high | medium | low | none`
-- `top_threats`: sorted by confidence
-- `recommendations`: human-readable strings mapping threat → action
+Risk level thresholds are defined in-module.
 
-## Public API (AnalyzerAgent)
-### `AnalyzerAgent.model_threat_graph(observations) -> dict`
-Returns:
-```json
-{ "nodes": [...], "edges": [...], "summary": {...} }
-```
+## Optional LLM enrichment (Grok)
+If constructed with an `LLMClient` (passed into `AnalyzerAgent(llm_client=...)`), `assess_risk()` may attach an `llm_insight` JSON object with:
+- correlation type (coordinated/independent/unclear)
+- lateral movement risk
+- containment priority + recommended actions
 
-### `AnalyzerAgent.simulate_attack(threat_graph) -> list[dict]`
-Runs `N_SIM_TRIALS` propagation trials and returns the per-trial result list.
+This enrichment never replaces deterministic scores; it only adds structured “analyst-style” context.
 
-### `AnalyzerAgent.assess_risk(simulation_results) -> dict`
-Returns a structured risk assessment.
-
-Note: This method supports two calling styles:
-- Pass a **list** of simulation trial dicts.
-- Pass a **dict** with `{ "nodes": ..., "simulation_results": ... }` if you want node metadata available during scoring.
+## Public API
+- `model_threat_graph(observations) -> {nodes, edges, summary}`
+- `simulate_attack(threat_graph) -> list[trial]`
+- `assess_risk(simulation_results_or_context_dict) -> dict`
 
 ## How to see it working
-Run the smoke test:
-- `tests/run_analyzer_agent.py`
+Run `tests/run_analyzer_agent.py`.
 
-It checks graph building, simulation output, and risk assessment formatting (and also exercises `ThreatSimTool`).

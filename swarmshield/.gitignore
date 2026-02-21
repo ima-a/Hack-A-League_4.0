@@ -76,6 +76,12 @@ Thumbs.db
 .env
 .env.local
 
+# Local runtime artifacts
+blocked_ips.txt
+
+# Python path helper for tests (kept in repo)
+!conftest.py
+
 # Large data files
 *.pcap
 *.pcapng

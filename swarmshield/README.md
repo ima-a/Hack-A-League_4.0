@@ -1,5 +1,110 @@
 # SwarmShield
 
+SwarmShield is a multi-agent cybersecurity prototype for network threat detection, analysis, and response.
+
+This repository currently implements a working agent core:
+- **Scout**: per-source traffic anomaly detection using Monte Carlo simulation (plus rolling early-warning inference)
+- **Analyzer**: correlation + attack-graph modeling + Monte Carlo propagation simulation to produce a risk assessment
+- **Responder**: Flask service that enforces actions via `iptables` (block / redirect-to-honeypot / quarantine) with safe auto-undo
+- **LLM layer (optional)**: Grok (xAI) enrichment/validation using strict JSON prompts (never required for core logic)
+
+## Architecture (logical)
+
+Scout → Analyzer → Responder → (optional) Evolver
+
+## Features
+
+Implemented:
+- Monte Carlo detection for **DDoS**, **PortScan**, **Exfiltration** (Scout)
+- Rolling trend-based early warning (Scout)
+- Attack-graph correlation + propagation simulation + risk scoring (Analyzer)
+- Real enforcement hooks using `iptables` + action logging + auto-unblock (Responder)
+- Optional Grok LLM enrichment with schema-constrained JSON outputs
+
+Planned / stubbed (present as placeholders but not fully implemented):
+- Live packet capture tool (PyShark/Scapy)
+- RL patrol tool, threat simulation tool, genetic evolution tool
+- CrewAI orchestration / coordinator loop
+
+## Project Structure
+
+```
+swarmshield/
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── .env                          # local keys/config (ignored)
+├── .env.example                  # template for .env
+├── conftest.py                   # pytest helper to make `src/` importable
+├── run.py                        # entry point (orchestrator skeleton)
+├── docs/                         # agent docs + workflow
+├── src/swarmshield/
+│   ├── __init__.py
+│   ├── main.py                   # entry point module
+│   ├── crew.py                   # crew orchestrator skeleton
+│   ├── agents/
+│   │   ├── scout.py
+│   │   ├── analyzer.py
+│   │   ├── responder.py
+│   │   ├── evolver.py
+│   │   └── llm_client.py
+│   └── tools/
+│       ├── patrol_tool.py
+│       ├── threat_sim_tool.py
+│       ├── response_tool.py
+│       ├── evolution_tool.py
+│       └── packet_capture_tool.py
+└── tests/
+    ├── test_agents.py
+    ├── test_tools.py
+    ├── test_crew.py
+    ├── test_responder.py
+    ├── run_scout_agent.py
+    ├── run_analyzer_agent.py
+    └── run_responder_agent.py
+```
+
+## Setup
+
+### Prerequisites
+- Python 3.9+
+- Optional: xAI Grok API key (`XAI_API_KEY`) for LLM enrichment. Without it, everything still runs.
+
+### Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+LLM configuration uses Grok (xAI):
+- `XAI_API_KEY`
+- `LLM_MODEL` (default: `grok-2-1212`)
+
+## Demo
+
+Run the smoke scripts:
+
+```bash
+.venv/bin/python tests/run_scout_agent.py
+.venv/bin/python tests/run_analyzer_agent.py
+.venv/bin/python tests/run_responder_agent.py
+```
+
+## Testing
+
+```bash
+.venv/bin/pytest tests/
+```
+
+## Documentation
+
+- Agents and workflow docs live under [docs/](docs/).
+- Source code lives under [src/swarmshield/](src/swarmshield/).
+# SwarmShield
+
 A distributed AI agent system for autonomous network threat detection, analysis, response, and learning. Built with CrewAI, integrating RL-based anomaly detection, GNNs for threat modeling, mirage deception, and genetic algorithm-driven evolution.
 
 ## Overview

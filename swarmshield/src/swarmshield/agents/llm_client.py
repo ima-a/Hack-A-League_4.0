@@ -13,9 +13,15 @@ except ImportError:
     _OPENAI_AVAILABLE = False
 
 
+# Grok (xAI) API endpoint — the openai SDK is reused with a custom base_url
+_GROK_BASE_URL = "https://api.x.ai/v1"
+
+
 class LLMClient:
     """
     Hallucination-resistant LLM client for SwarmShield agents.
+
+    Uses the Grok (xAI) API via the openai-compatible SDK.
 
     Design principles
     -----------------
@@ -23,13 +29,13 @@ class LLMClient:
     - JSON-mode enforced  : response_format=json_object, no prose
     - Grounded prompts    : agents feed only measured numerical data;
                             the model is told those values are ground truth
-    - Graceful fallback   : if no API key or openai package is missing,
-                            every method returns None without raising
+    - Graceful fallback   : if XAI_API_KEY is absent or the openai package
+                            is missing, every method returns None without raising
     """
 
     def __init__(
         self,
-        model:       str   = "gpt-4o",
+        model:       str   = "grok-2-1212",
         temperature: float = 0.0,
         max_tokens:  int   = 700,
         api_key:     Optional[str] = None,
@@ -39,10 +45,10 @@ class LLMClient:
         self.max_tokens  = max_tokens
         self._client: Optional[Any] = None
 
-        key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+        key = (api_key or os.environ.get("XAI_API_KEY", "")).strip()
         if not key:
             logger.debug(
-                "LLMClient: OPENAI_API_KEY not set — LLM enrichment disabled."
+                "LLMClient: XAI_API_KEY not set — LLM enrichment disabled."
             )
             return
 
@@ -54,13 +60,13 @@ class LLMClient:
             return
 
         try:
-            self._client = OpenAI(api_key=key)
+            self._client = OpenAI(api_key=key, base_url=_GROK_BASE_URL)
             logger.info(
-                "LLMClient ready (model=%s, temperature=%.1f, max_tokens=%d)",
+                "LLMClient ready — Grok API (model=%s, temperature=%.1f, max_tokens=%d)",
                 model, temperature, max_tokens,
             )
         except Exception as exc:
-            logger.warning("LLMClient: failed to initialise OpenAI client: %s", exc)
+            logger.warning("LLMClient: failed to initialise Grok client: %s", exc)
 
     # ------------------------------------------------------------------
 
