@@ -4,14 +4,29 @@ SwarmShield Agents
 Agent implementations for network defense swarm.
 """
 
-from .scout import ScoutAgent
-from .analyzer import AnalyzerAgent
-from .responder import ResponderAgent
-from .evolver import EvolverAgent
+try:
+    from .scout import ScoutAgent
+except Exception:
+    ScoutAgent = None  # type: ignore[assignment,misc]
+
+try:
+    from .analyzer import AnalyzerAgent
+except Exception:
+    AnalyzerAgent = None  # type: ignore[assignment,misc]
+
+try:
+    from .responder import app as responder_app
+except Exception:
+    responder_app = None  # type: ignore[assignment]
+
+try:
+    from .evolver import EvolverAgent
+except Exception:
+    EvolverAgent = None  # type: ignore[assignment,misc]
 
 __all__ = [
     "ScoutAgent",
     "AnalyzerAgent",
-    "ResponderAgent",
+    "responder_app",
     "EvolverAgent",
 ]

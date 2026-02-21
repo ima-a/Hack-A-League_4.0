@@ -1,5 +1,5 @@
 """
-response_tool.py — SwarmShield
+response_tools.py — SwarmShield
 
 Standalone helper functions used by the Responder agent for IP list
 management, input validation, log-entry formatting, and coordinator
@@ -157,11 +157,11 @@ def format_action_log_entry(
     Returns:
         A :class:`dict` with the following keys:
 
-        * ``timestamp``    — UTC time of creation as an ISO-8601 string.
-        * ``attacker_ip``  — the *ip* argument.
-        * ``action_taken`` — the *action* argument.
-        * ``requested_by`` — the *requester* argument.
-        * ``success``      — the *success* argument (bool).
+        * ``timestamp``   — UTC time of creation as an ISO-8601 string.
+        * ``attacker_ip`` — the *ip* argument.
+        * ``action_taken``— the *action* argument.
+        * ``requested_by``— the *requester* argument.
+        * ``success``     — the *success* argument (bool).
     """
     return {
         "timestamp":    datetime.now(timezone.utc).isoformat(),
