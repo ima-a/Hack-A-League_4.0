@@ -26,3 +26,4 @@ mypy==1.5.0
 ipython==8.14.0
 jupyter==1.0.0
 notebook==7.0.0
+flask==2.2.3

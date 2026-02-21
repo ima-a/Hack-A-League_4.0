@@ -1,136 +1,87 @@
 """
-response_tool.py — SwarmShield
+Response Tool
 
-Standalone helper functions used by the Responder agent for IP list
-management, input validation, log-entry formatting, and coordinator
-communication.  No framework dependencies — only the standard library
-plus *requests*.
+Mirage deception and SDN-based network control.
+Also exposes utility helpers used by the Responder agent and its tests.
 """
 
 import ipaddress
 import logging
 import os
 from datetime import datetime, timezone
-
-import requests
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# IP file helpers
+# IP-file helpers
 # ---------------------------------------------------------------------------
 
-def load_blocked_ips(filepath: str = "blocked_ips.txt") -> set:
+def load_blocked_ips(filepath: str) -> Set[str]:
     """
-    Load the set of currently blocked IP addresses from *filepath*.
+    Load the set of blocked IPs from *filepath*.
 
-    Each non-empty line in the file is treated as one IP string.
-    Whitespace is stripped; blank lines are ignored.
-
-    Args:
-        filepath: Path to the blocked-IPs file. Defaults to
-                  ``"blocked_ips.txt"`` in the current working directory.
-
-    Returns:
-        A :class:`set` of IP strings.  Returns an empty set if the file
-        does not exist or cannot be read.
+    Returns an empty set when the file does not exist or is empty.
     """
-    blocked: set = set()
-    if not os.path.exists(filepath):
-        return blocked
     try:
         with open(filepath, "r") as fh:
-            for line in fh:
-                ip = line.strip()
-                if ip:
-                    blocked.add(ip)
-    except OSError as exc:
-        logger.error("load_blocked_ips: cannot read %s: %s", filepath, exc)
-    return blocked
+            return {line.strip() for line in fh if line.strip()}
+    except FileNotFoundError:
+        return set()
 
 
-def save_blocked_ip(ip: str, filepath: str = "blocked_ips.txt") -> bool:
+def save_blocked_ip(ip: str, filepath: str) -> bool:
     """
-    Append *ip* to *filepath* if it is not already present.
-
-    Args:
-        ip:       The IP address string to persist.
-        filepath: Path to the blocked-IPs file. Defaults to
-                  ``"blocked_ips.txt"``.
+    Append *ip* to *filepath* (one IP per line).
 
     Returns:
-        ``True`` if the IP was added, ``False`` if it was already in the
-        file (no duplicate is written).
+        True  – IP was added.
+        False – IP was already present (no duplicate written).
     """
     existing = load_blocked_ips(filepath)
     if ip in existing:
-        logger.debug("save_blocked_ip: %s already in %s", ip, filepath)
         return False
-    try:
-        with open(filepath, "a") as fh:
-            fh.write(f"{ip}\n")
-        logger.info("save_blocked_ip: added %s to %s", ip, filepath)
-        return True
-    except OSError as exc:
-        logger.error("save_blocked_ip: cannot write to %s: %s", filepath, exc)
-        return False
+    with open(filepath, "a") as fh:
+        fh.write(f"{ip}\n")
+    return True
 
 
-def remove_blocked_ip(ip: str, filepath: str = "blocked_ips.txt") -> bool:
+def remove_blocked_ip(ip: str, filepath: str) -> bool:
     """
-    Remove *ip* from *filepath*, rewriting the file without that line.
-
-    Args:
-        ip:       The IP address string to remove.
-        filepath: Path to the blocked-IPs file. Defaults to
-                  ``"blocked_ips.txt"``.
+    Remove *ip* from *filepath*.
 
     Returns:
-        ``True`` if the IP was found and removed, ``False`` if it was not
-        present in the file.
+        True  – IP was found and removed.
+        False – IP was not present in the file.
     """
-    if not os.path.exists(filepath):
-        logger.debug("remove_blocked_ip: %s does not exist", filepath)
+    existing = load_blocked_ips(filepath)
+    if ip not in existing:
         return False
-    try:
-        with open(filepath, "r") as fh:
-            lines = fh.readlines()
-        filtered = [ln for ln in lines if ln.strip() != ip]
-        if len(filtered) == len(lines):
-            logger.debug("remove_blocked_ip: %s not found in %s", ip, filepath)
-            return False
-        with open(filepath, "w") as fh:
-            fh.writelines(filtered)
-        logger.info("remove_blocked_ip: removed %s from %s", ip, filepath)
-        return True
-    except OSError as exc:
-        logger.error("remove_blocked_ip: error updating %s: %s", filepath, exc)
-        return False
+    existing.discard(ip)
+    # Rewrite the file with the remaining IPs
+    with open(filepath, "w") as fh:
+        for entry in sorted(existing):
+            fh.write(f"{entry}\n")
+    return True
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# IP validation
 # ---------------------------------------------------------------------------
 
-def is_valid_ip(ip_string: str) -> bool:
+def is_valid_ip(address: str) -> bool:
     """
-    Check whether *ip_string* is a valid IPv4 address.
+    Return True if *address* is a valid IPv4 address, False otherwise.
 
-    Uses :mod:`ipaddress` from the standard library; no third-party
-    dependencies required.
-
-    Args:
-        ip_string: The string to validate.
-
-    Returns:
-        ``True`` if *ip_string* is a syntactically valid IPv4 address,
-        ``False`` otherwise (including IPv6, hostnames, or malformed input).
+    Explicitly rejects IPv6 addresses, empty strings, and malformed strings.
     """
+    if not address:
+        return False
     try:
-        addr = ipaddress.ip_address(ip_string)
-        return addr.version == 4
-    except ValueError:
+        ipaddress.IPv4Address(address)
+        return True
+    except (ipaddress.AddressValueError, ValueError):
         return False
 
 
@@ -143,25 +94,16 @@ def format_action_log_entry(
     action: str,
     requester: str,
     success: bool,
-) -> dict:
+) -> Dict[str, Any]:
     """
-    Build a structured log-entry dictionary for a Responder action.
+    Build a structured log-entry dict for a response action.
 
-    Args:
-        ip:        The attacker / target IP address.
-        action:    The action taken (e.g. ``"block"``, ``"quarantine"``).
-        requester: Identifier of the agent or component that requested
-                   the action (e.g. ``"responder-1"``).
-        success:   Whether the action completed successfully.
-
-    Returns:
-        A :class:`dict` with the following keys:
-
-        * ``timestamp``    — UTC time of creation as an ISO-8601 string.
-        * ``attacker_ip``  — the *ip* argument.
-        * ``action_taken`` — the *action* argument.
-        * ``requested_by`` — the *requester* argument.
-        * ``success``      — the *success* argument (bool).
+    Returns a dict with keys:
+        timestamp    – ISO-8601 UTC string
+        attacker_ip  – source IP that was acted upon
+        action_taken – action string (e.g. "block", "quarantine")
+        requested_by – agent / service that requested the action
+        success      – bool indicating whether the action succeeded
     """
     return {
         "timestamp":    datetime.now(timezone.utc).isoformat(),
@@ -172,47 +114,32 @@ def format_action_log_entry(
     }
 
 
-# ---------------------------------------------------------------------------
-# Coordinator / Dashboard communication
-# ---------------------------------------------------------------------------
-
-def post_to_coordinator(
-    coordinator_ip: str,
-    port: int,
-    endpoint: str,
-    payload_dict: dict,
-) -> bool:
+class ResponseTool:
     """
-    Send a JSON POST request to a coordinator or dashboard service.
-
-    Constructs the URL as ``http://{coordinator_ip}:{port}/{endpoint}``
-    and posts *payload_dict* as the JSON body.
-
-    Args:
-        coordinator_ip: IP address (or hostname) of the target service.
-        port:           TCP port of the target service.
-        endpoint:       URL path without a leading slash
-                        (e.g. ``"action_taken"`` or ``"update"``).
-        payload_dict:   Dictionary to serialise as the JSON request body.
-
-    Returns:
-        ``True`` if the request was sent and a response was received
-        (any HTTP status code counts as a successful send).
-        ``False`` if a network error, timeout, or exception occurred.
+    Response Tool
+    
+    Deploys mirage honeypots and manages SDN controls
+    for network isolation and deception strategies.
     """
-    url = f"http://{coordinator_ip}:{port}/{endpoint}"
-    try:
-        response = requests.post(url, json=payload_dict, timeout=3)
-        logger.info(
-            "post_to_coordinator: POST %s → HTTP %d", url, response.status_code
-        )
-        return True
-    except requests.exceptions.Timeout:
-        logger.warning("post_to_coordinator: timed out reaching %s", url)
-        return False
-    except requests.exceptions.ConnectionError as exc:
-        logger.warning("post_to_coordinator: connection error to %s: %s", url, exc)
-        return False
-    except requests.exceptions.RequestException as exc:
-        logger.error("post_to_coordinator: unexpected error posting to %s: %s", url, exc)
-        return False
+    
+    def __init__(self):
+        """Initialize response tool."""
+        self.logger = logging.getLogger(f"{__name__}.ResponseTool")
+    
+    def execute(self, response_plan: Dict) -> Dict[str, Any]:
+        """
+        Execute response plan.
+        
+        Args:
+            response_plan: Defense actions to execute
+            
+        Returns:
+            Response execution results
+        """
+        self.logger.info("Executing response plan...")
+        # TODO: Implement mirage + SDN controls
+        return {
+            "honeypots_deployed": [],
+            "segments_isolated": [],
+            "actions_executed": 0
+        }
