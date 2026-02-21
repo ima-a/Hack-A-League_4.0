@@ -1,0 +1,40 @@
+tools:
+  patrol_tool:
+    enabled: true
+    model: "rl-based-anomaly"
+    threshold: 0.8
+    
+  threat_sim_tool:
+    enabled: true
+    gnn_model: "gcn"
+    simulation_runs: 100
+    
+  response_tool:
+    enabled: true
+    mirage_enabled: true
+    sdn_enabled: false
+    isolation_level: "network"
+    
+  evolution_tool:
+    enabled: true
+    algorithm: "deap-genetic"
+    population_size: 50
+    generations: 10
+    
+  packet_capture_tool:
+    enabled: true
+    interface: "auto"
+    timeout: 60
+    filter: ""
+
+network:
+  interface: "eth0"
+  packet_buffer_size: 1000
+  
+database:
+  enabled: false
+  type: "postgresql"
+  
+logging:
+  level: "INFO"
+  file: "logs/swarmshield.log"

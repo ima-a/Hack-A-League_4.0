@@ -1,0 +1,37 @@
+tasks:
+  scout_task:
+    name: "Scan and Detect"
+    description: "Perform network scan and identify anomalies"
+    agent: scout
+    expected_output: |
+      A detailed report of detected anomalies, suspicious IPs, and network patterns
+    tools:
+      - patrol_tool
+      - packet_capture_tool
+
+  analyze_task:
+    name: "Analyze Threats"
+    description: "Model and simulate detected threats"
+    agent: analyzer
+    expected_output: |
+      Threat assessment including attack graphs, impact predictions, and risk scores
+    depends_on:
+      - scout_task
+
+  respond_task:
+    name: "Deploy Response"
+    description: "Execute defensive measures"
+    agent: responder
+    expected_output: |
+      Response log including deployed honeypots, isolated segments, and actions taken
+    depends_on:
+      - analyze_task
+
+  evolve_task:
+    name: "Evolve Strategy"
+    description: "Learn and optimize defensive strategies"
+    agent: evolver
+    expected_output: |
+      Updated strategy parameters and fitness metrics for future iterations
+    depends_on:
+      - respond_task
