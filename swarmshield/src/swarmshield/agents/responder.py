@@ -58,6 +58,15 @@ def _auto_unblock_seconds() -> int:
 
 AUTO_UNBLOCK_SECONDS = _auto_unblock_seconds()
 
+# Pre-emptive (anticipatory) action configuration.
+# These mirror EARLY_WARNING_THRESHOLD / CONFIDENCE_THRESHOLD from scout.py
+# but are independently configurable via environment variables so the
+# two sub-systems can be tuned separately.
+PREEMPTIVE_CONFIDENCE_GATE     = float(os.environ.get("PREEMPTIVE_CONFIDENCE_GATE",    "0.40"))
+CONFIRMED_CONFIDENCE_GATE      = float(os.environ.get("CONFIRMED_CONFIDENCE_GATE",     "0.60"))
+PREEMPTIVE_AUTO_EXPIRE_SECONDS = int(os.environ.get("PREEMPTIVE_EXPIRE_SECONDS",       "60"))
+PREEMPTIVE_RATE_LIMIT_PPS      = int(os.environ.get("PREEMPTIVE_RATE_LIMIT_PPS",       "100"))
+
 # ---------------------------------------------------------------------------
 # Flask app
 # ---------------------------------------------------------------------------
@@ -211,6 +220,85 @@ def remove_redirect(ip_address: str) -> bool:
     return success
 
 
+# ---------------------------------------------------------------------------
+# Pre-emptive (anticipatory) action functions
+# These are low-impact, reversible, and expire automatically.
+# ---------------------------------------------------------------------------
+
+def rate_limit_ip(
+    ip_address: str,
+    pps_limit:  int = PREEMPTIVE_RATE_LIMIT_PPS,
+) -> bool:
+    """
+    Apply a per-source packet-rate limit via iptables hashlimit.
+
+    Low-impact pre-emptive action: throttles suspicious traffic *without*
+    dropping it outright.  Automatically expired by the auto-unblock thread
+    after ``PREEMPTIVE_AUTO_EXPIRE_SECONDS`` seconds.
+    Returns True if the iptables command succeeded.
+    """
+    rule_name = f"rl_{ip_address.replace('.', '_')}"
+    cmd = [
+        "sudo", "iptables", "-A", "INPUT",
+        "-s", ip_address,
+        "-m", "hashlimit",
+        "--hashlimit-name",  rule_name,
+        "--hashlimit-above", f"{pps_limit}/sec",
+        "--hashlimit-mode",  "srcip",
+        "-j", "DROP",
+    ]
+    success = _run_cmd(cmd)
+    if success:
+        logger.info(
+            "Rate-limited %s at %d pps (auto-expires in %ds)",
+            ip_address, pps_limit, PREEMPTIVE_AUTO_EXPIRE_SECONDS,
+        )
+    log_action(ip_address, "rate_limit", AGENT_ID, success)
+    return success
+
+
+def remove_rate_limit(
+    ip_address: str,
+    pps_limit:  int = PREEMPTIVE_RATE_LIMIT_PPS,
+) -> bool:
+    """
+    Remove the hashlimit rate-limit rule for ip_address.
+    Returns True if the iptables command succeeded.
+    """
+    rule_name = f"rl_{ip_address.replace('.', '_')}"
+    cmd = [
+        "sudo", "iptables", "-D", "INPUT",
+        "-s", ip_address,
+        "-m", "hashlimit",
+        "--hashlimit-name",  rule_name,
+        "--hashlimit-above", f"{pps_limit}/sec",
+        "--hashlimit-mode",  "srcip",
+        "-j", "DROP",
+    ]
+    success = _run_cmd(cmd)
+    log_action(ip_address, "remove_rate_limit", AGENT_ID, success)
+    return success
+
+
+def preemptive_monitor(
+    ip_address:    str,
+    threat_type:   str   = "unknown",
+    current_conf:  float = 0.0,
+    predicted_conf: float = 0.0,
+) -> bool:
+    """
+    Elevated monitoring: no enforcement, but creates a tagged action-log entry
+    so the auto-unblock thread and dashboards can track pre-emptive observations.
+    Always succeeds (returns True).
+    """
+    logger.info(
+        "ELEVATED MONITOR: %s — threat=%s  current=%.2f  predicted=%.2f",
+        ip_address, threat_type, current_conf, predicted_conf,
+    )
+    log_action(ip_address, "elevated_monitor", AGENT_ID, True)
+    return True
+
+
 # ===========================================================================
 # Logging helper
 # ===========================================================================
@@ -278,6 +366,71 @@ def report_action_async(source_ip: str, action_taken: str, success: bool) -> Non
 
 
 # ===========================================================================
+# Pre-emptive safety gate
+# ===========================================================================
+
+# Only these low-impact actions may be issued pre-emptively (before confirmation).
+_PREEMPTIVE_SAFE_ACTIONS    = frozenset({"rate_limit", "elevated_monitor"})
+# These destructive actions must NEVER be issued on an early-warning signal.
+_CONFIRMED_ONLY_ACTIONS     = frozenset({"block", "redirect_to_honeypot", "quarantine"})
+
+
+def _preemptive_safety_gate(
+    ip_address:     str,
+    recommended:    str,
+    current_conf:   float,
+    predicted_conf: float,
+    alert_level:    str,
+) -> tuple:  # (approved: bool, reason: str)
+    """
+    Strict safety gate applied to every pre-emptive action request.
+
+    All four conditions below must hold for a pre-emptive action to be
+    approved.  If any fail, the action is rejected with a reason string;
+    the Responder logs the rejection and returns a 200 ``gate_rejected``
+    response (not an error — the system is working as intended).
+
+    Gate 1 — action whitelist  : only rate_limit / elevated_monitor allowed.
+    Gate 2 — alert-level guard : must be ``early_warning`` (not ``confirmed``
+              or higher; confirmed threats take the normal /verdict path).
+    Gate 3 — predicted threshold: predicted confidence must be ≥
+              ``PREEMPTIVE_CONFIDENCE_GATE`` (rising toward danger).
+    Gate 4 — not-yet-confirmed : current confidence must be below
+              ``CONFIRMED_CONFIDENCE_GATE`` (otherwise use /verdict instead).
+
+    Returns
+    -------
+    (True, reason_str)   if all gates pass
+    (False, reason_str)  if any gate rejects
+    """
+    if recommended not in _PREEMPTIVE_SAFE_ACTIONS:
+        return (
+            False,
+            f"action '{recommended}' is not a pre-emptive-safe action — "
+            f"use /verdict for destructive actions",
+        )
+    if alert_level != "early_warning":
+        return (
+            False,
+            f"alert_level '{alert_level}' does not qualify for pre-emptive action — "
+            f"must be 'early_warning'",
+        )
+    if predicted_conf < PREEMPTIVE_CONFIDENCE_GATE:
+        return (
+            False,
+            f"predicted confidence {predicted_conf:.3f} is below gate "
+            f"{PREEMPTIVE_CONFIDENCE_GATE} — not yet a credible rising threat",
+        )
+    if current_conf >= CONFIRMED_CONFIDENCE_GATE:
+        return (
+            False,
+            f"current confidence {current_conf:.3f} is at or above confirmed "
+            f"threshold {CONFIRMED_CONFIDENCE_GATE} — use /verdict endpoint instead",
+        )
+    return (True, "all pre-emptive safety gates passed")
+
+
+# ===========================================================================
 # Decision engine
 # ===========================================================================
 
@@ -308,6 +461,11 @@ def decide_and_act(verdict: dict) -> tuple:
     elif recommended == "quarantine" or attack_type == "Ransomware":
         success = quarantine_host(ip)
         action  = "quarantine"
+
+    elif recommended == "rate_limit":
+        # Pre-emptive rate-limit — low-impact, auto-expires
+        success = rate_limit_ip(ip)
+        action  = "rate_limit"
 
     else:
         # "monitor" or any unrecognised combination
@@ -367,8 +525,8 @@ def _auto_unblock_loop() -> None:
             last_action = last_entry.get("action_taken", "")
             last_ts_str = last_entry.get("timestamp", "")
 
-            # Only act on active blocking/redirect states
-            if last_action not in ("block", "redirect_to_honeypot"):
+            # Handle active blocking/redirect/rate-limit states
+            if last_action not in ("block", "redirect_to_honeypot", "rate_limit"):
                 continue
 
             # Parse timestamp
@@ -378,7 +536,13 @@ def _auto_unblock_loop() -> None:
                 continue
 
             age_seconds = (now - last_ts).total_seconds()
-            if age_seconds >= AUTO_UNBLOCK_SECONDS:
+            # Pre-emptive rate-limits expire faster than full blocks
+            expiry = (
+                PREEMPTIVE_AUTO_EXPIRE_SECONDS
+                if last_action == "rate_limit"
+                else AUTO_UNBLOCK_SECONDS
+            )
+            if age_seconds >= expiry:
                 if last_action == "block":
                     logger.info(
                         "Auto-unblocking %s (blocked %.0fs ago)", ip, age_seconds
@@ -392,6 +556,13 @@ def _auto_unblock_loop() -> None:
                     )
                     remove_redirect(ip)
                     report_action_async(ip, "auto_remove_redirect", True)
+                elif last_action == "rate_limit":
+                    logger.info(
+                        "Auto-removing rate-limit for %s (set %.0fs ago, limit=%ds)",
+                        ip, age_seconds, PREEMPTIVE_AUTO_EXPIRE_SECONDS
+                    )
+                    remove_rate_limit(ip)
+                    report_action_async(ip, "auto_remove_rate_limit", True)
 
 
 def start_auto_unblock_thread() -> None:
@@ -528,6 +699,87 @@ def verdict_endpoint():
     if llm_validation:
         response_body["llm_validation"] = llm_validation
     return jsonify(response_body), 200
+
+
+@app.route("/preemptive_action", methods=["POST"])
+def preemptive_action_endpoint():
+    """
+    Receive an anticipatory pre-emptive action request produced by
+    ``AnalyzerAgent.pre_assess_risk()`` (triggered by Scout's early-warning
+    rolling inference).
+
+    Only ``rate_limit`` and ``elevated_monitor`` are accepted here.
+    All four safety-gate conditions must pass before any action is taken.
+    A ``gate_rejected`` response (HTTP 200) means the gate worked correctly—
+    it is not an error.
+
+    Expected JSON fields
+    --------------------
+    source_ip, alert_level, current_confidence, predicted_confidence,
+    recommended_action, agent_id.
+    Optional: threat_type, trend_direction, reasoning.
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid or missing JSON payload"}), 400
+
+    required = [
+        "source_ip", "alert_level", "current_confidence",
+        "predicted_confidence", "recommended_action", "agent_id",
+    ]
+    missing = [f for f in required if f not in data]
+    if missing:
+        return jsonify({"error": f"Missing fields: {missing}"}), 400
+
+    ip             = data["source_ip"]
+    alert_level    = data["alert_level"]
+    current_conf   = float(data["current_confidence"])
+    predicted_conf = float(data["predicted_confidence"])
+    recommended    = data["recommended_action"]
+    threat_type    = data.get("threat_type", "unknown")
+
+    logger.info(
+        "Pre-emptive request: %s  alert=%s  conf=%.2f→%.2f  action=%s",
+        ip, alert_level, current_conf, predicted_conf, recommended,
+    )
+
+    # Apply all safety gates before touching any enforcement rules
+    approved, gate_reason = _preemptive_safety_gate(
+        ip, recommended, current_conf, predicted_conf, alert_level
+    )
+
+    if not approved:
+        logger.info(
+            "Pre-emptive action REJECTED by safety gate for %s: %s", ip, gate_reason
+        )
+        return jsonify({
+            "status":       "gate_rejected",
+            "source_ip":    ip,
+            "reason":       gate_reason,
+            "action_taken": None,
+            "agent_id":     AGENT_ID,
+            "timestamp":    _now_iso(),
+        }), 200
+
+    # Execute the approved pre-emptive action
+    if recommended == "rate_limit":
+        success = rate_limit_ip(ip)
+        action  = "rate_limit"
+    else:  # elevated_monitor
+        success = preemptive_monitor(ip, threat_type, current_conf, predicted_conf)
+        action  = "elevated_monitor"
+
+    report_action_async(ip, action, success)
+
+    return jsonify({
+        "status":       "ok",
+        "source_ip":    ip,
+        "action_taken": action,
+        "success":      success,
+        "gate_reason":  gate_reason,
+        "agent_id":     AGENT_ID,
+        "timestamp":    _now_iso(),
+    }), 200
 
 
 @app.route("/health", methods=["GET"])

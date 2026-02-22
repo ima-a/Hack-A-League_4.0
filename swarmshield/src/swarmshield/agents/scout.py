@@ -488,13 +488,18 @@ class ScoutAgent:
 
     def __init__(self, name: str = "Scout", agent_id: str = "scout-1",
                  log_file: str = LOG_FILE, thresholds: Optional[dict] = None,
-                 llm_client: Optional["LLMClient"] = None):
+                 llm_client: Optional["LLMClient"] = None,
+                 packet_source: Optional[Any] = None):
         self.name        = name
         self.agent_id    = agent_id
         self.log_file    = log_file
         self.thresholds  = thresholds or {}
         self.logger      = logging.getLogger(f"{__name__}.{name}")
         self._llm_client = llm_client          # Optional LLM enrichment layer
+        # If provided, packet_source(window_seconds) is called instead of the
+        # built-in synthetic generator.  LivePacketCapture.drain() satisfies
+        # this interface for live demo use.
+        self._packet_source = packet_source
         # Rolling inference state
         self._packet_buffer:  deque = deque()   # time-bounded packet buffer
         self._belief_history: Dict[str, deque] = {}  # per-IP MC snapshot history
@@ -507,17 +512,30 @@ class ScoutAgent:
         """
         Return a list of packet-metadata dicts representing one analysis window.
 
-        In production this reads from a live Scapy buffer; here it generates
-        a realistic synthetic window so the pipeline works without root /
-        Scapy / a live interface.
+        If a ``packet_source`` callable was supplied at construction time
+        (e.g. ``LivePacketCapture.drain`` from the live demo), that callable
+        is invoked with ``window_seconds`` and its return value is used
+        directly — giving Scout genuine live network traffic.
+
+        Otherwise the built-in synthetic generator is used so the pipeline
+        works without root / Scapy / a live interface (dev/test mode).
 
         Each dict keys: src_ip, dst_ip, dst_port, protocol, size,
                         timestamp, is_syn
         """
         self.logger.info("Capturing packets (window=%ds)…", window_seconds)
-        packets = _simulate_packets(window_seconds)
-        self.logger.info("Captured %d packets from %d source IPs.",
-                         len(packets), len(_get_all_source_ips(packets)))
+        if self._packet_source is not None:
+            packets = self._packet_source(window_seconds)
+            self.logger.info(
+                "Live capture: %d packets from %d source IPs.",
+                len(packets), len(_get_all_source_ips(packets)),
+            )
+        else:
+            packets = _simulate_packets(window_seconds)
+            self.logger.info(
+                "Synthetic capture: %d packets from %d source IPs.",
+                len(packets), len(_get_all_source_ips(packets)),
+            )
         return packets
 
     def scan_network(self, window_seconds: int = WINDOW_SECONDS) -> Dict[str, Any]:
@@ -746,10 +764,11 @@ class ScoutAgent:
 
     def run_rolling_inference(
         self,
-        tick_seconds:    float = ROLLING_TICK_SECONDS,
-        horizon_seconds: float = ROLLING_HORIZON_SECONDS,
-        n_ticks:         Optional[int] = None,
-        on_tick:         Optional[Any] = None,
+        tick_seconds:      float = ROLLING_TICK_SECONDS,
+        horizon_seconds:   float = ROLLING_HORIZON_SECONDS,
+        n_ticks:           Optional[int] = None,
+        on_tick:           Optional[Any] = None,
+        on_early_warning:  Optional[Any] = None,
     ) -> None:
         """
         Continuous rolling inference loop.
@@ -768,8 +787,14 @@ class ScoutAgent:
             Stop after this many ticks; ``None`` runs indefinitely until
             interrupted by KeyboardInterrupt.
         on_tick : callable or None
-            Optional callback invoked with the ``rolling_tick()`` result dict
-            after each tick.  Signature: ``on_tick(result: dict) -> None``.
+            Optional callback invoked with the full ``rolling_tick()`` result
+            dict after every tick.  Signature: ``on_tick(result: dict) -> None``.
+        on_early_warning : callable or None
+            Anticipatory callback invoked ONLY when one or more IPs are at
+            ``early_warning`` alert level.  Fires before the full
+            ``CONFIDENCE_THRESHOLD`` is crossed, giving the system a window
+            to apply pre-emptive, low-impact countermeasures.
+            Signature: ``on_early_warning(ips: list[str], per_ip: dict) -> None``.
         """
         self.logger.info(
             "Starting rolling inference (tick=%.1fs, horizon=%.1fs)…",
@@ -789,6 +814,10 @@ class ScoutAgent:
                 )
                 if on_tick is not None:
                     on_tick(result)
+                # Anticipatory path: fire on_early_warning ONLY when IPs are
+                # in the early-warning zone (not yet confirmed threats).
+                if on_early_warning is not None and ew > 0:
+                    on_early_warning(result["early_warnings"], result["per_ip"])
                 tick += 1
                 if n_ticks is None or tick < n_ticks:
                     time.sleep(tick_seconds)
@@ -847,3 +876,45 @@ class ScoutAgent:
             current_conf, predicted_conf,
             confirmed_threshold, early_warning_threshold,
         )
+
+    @staticmethod
+    def get_preemptive_candidates(
+        tick_result: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract IPs at ``early_warning`` alert level from a ``rolling_tick()``
+        result and return them as structured dicts ready to feed directly into
+        ``AnalyzerAgent.pre_assess_risk()`` or the Responder's
+        ``/preemptive_action`` endpoint.
+
+        This is the **anticipatory bridge**: it converts a raw tick result
+        into a prioritised list of pre-emptive action candidates without
+        committing any enforcement action itself.
+
+        Parameters
+        ----------
+        tick_result : dict
+            Direct output of ``ScoutAgent.rolling_tick()``.
+
+        Returns
+        -------
+        list of dict
+            Each entry contains:
+            source_ip, alert_level, current_confidence, predicted_confidence,
+            threat_type, trend_direction, stats, trend.
+        """
+        per_ip = tick_result.get("per_ip", {})
+        return [
+            {
+                "source_ip":            ip,
+                "alert_level":          data["alert_level"],
+                "current_confidence":   data["current_confidence"],
+                "predicted_confidence": data["predicted_confidence"],
+                "threat_type":          data["monte_carlo"].get("top_threat", "unknown"),
+                "stats":                data["stats"],
+                "trend_direction":      data["trend"].get("trend_direction", "stable"),
+                "trend":                data["trend"],
+            }
+            for ip, data in per_ip.items()
+            if data.get("alert_level") == "early_warning"
+        ]

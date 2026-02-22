@@ -503,3 +503,115 @@ class AnalyzerAgent:
                 llm_insight.get("lateral_movement_risk", "?"),
             )
         return assessment
+
+    def pre_assess_risk(self, tick_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Anticipatory risk assessment from Scout's ``rolling_tick()`` output.
+
+        Processes only IPs at ``early_warning`` alert level — those whose
+        *predicted* confidence is rising toward the confirmed threshold but
+        have not yet crossed it.  Only low-impact actions are recommended:
+        ``rate_limit`` or ``elevated_monitor``.
+
+        This method is the analytical layer of the anticipatory pipeline:
+
+            Scout.rolling_tick()
+                → Scout.get_preemptive_candidates()   (optional helper)
+                → Analyzer.pre_assess_risk()           (this method)
+                → Responder POST /preemptive_action    (enforcement with safety gate)
+
+        Parameters
+        ----------
+        tick_result : dict
+            Direct output of ``ScoutAgent.rolling_tick()``.
+
+        Returns
+        -------
+        dict
+            {
+              "preemptive_actions": [
+                {
+                  "source_ip":            str,
+                  "alert_level":          "early_warning",
+                  "current_confidence":   float,
+                  "predicted_confidence": float,
+                  "threat_type":          str,
+                  "trend_direction":      str,
+                  "recommended_action":   "rate_limit" | "elevated_monitor",
+                  "reasoning":            str,
+                  "agent_id":             str,
+                }, ...
+              ],
+              "total_early_warnings": int,
+              "timestamp":            str (ISO-8601 UTC),
+            }
+
+        Safety contract (enforced here, re-enforced at Responder):
+        - Only ``rate_limit`` or ``elevated_monitor`` are ever recommended.
+        - IPs at ``confirmed`` or higher alert levels are excluded — they must
+          travel the normal reactive path through ``assess_risk()``.
+        - An IP is only escalated to ``rate_limit`` when its predicted
+          confidence is >= 0.50 AND the trend is ``rising``.
+        """
+        # Low-impact pre-emptive actions only
+        _RATE_LIMIT_PRED_THRESHOLD = 0.50
+
+        early_warning_ips = tick_result.get("early_warnings", [])
+        per_ip            = tick_result.get("per_ip", {})
+
+        preemptive_actions: List[Dict[str, Any]] = []
+
+        for ip in early_warning_ips:
+            ip_data    = per_ip.get(ip, {})
+            alert_level = ip_data.get("alert_level", "")
+
+            # Only process genuine early_warning IPs (exclude confirmed ones)
+            if alert_level != "early_warning":
+                continue
+
+            current_conf = ip_data.get("current_confidence", 0.0)
+            pred_conf    = ip_data.get("predicted_confidence", 0.0)
+            mc           = ip_data.get("monte_carlo", {})
+            threat_type  = mc.get("top_threat", "unknown")
+            trend        = ip_data.get("trend", {})
+            trend_dir    = trend.get("trend_direction", "stable")
+
+            # Decision: rate_limit for rising high-pred threats;
+            #           elevated_monitor for everything else in the zone
+            if pred_conf >= _RATE_LIMIT_PRED_THRESHOLD and trend_dir == "rising":
+                recommended = "rate_limit"
+                reasoning = (
+                    f"Predicted confidence {pred_conf:.2f} is rising toward the "
+                    f"confirmed threshold. Throttling {ip} pre-emptively to reduce "
+                    f"impact if the threat materialises."
+                )
+            else:
+                recommended = "elevated_monitor"
+                reasoning = (
+                    f"Confidence {current_conf:.2f} (predicted {pred_conf:.2f}, "
+                    f"trend: {trend_dir}) in early-warning zone for {threat_type}. "
+                    f"Elevating monitoring; withholding enforcement until confirmation."
+                )
+
+            preemptive_actions.append({
+                "source_ip":            ip,
+                "alert_level":          "early_warning",
+                "current_confidence":   current_conf,
+                "predicted_confidence": pred_conf,
+                "threat_type":          threat_type,
+                "trend_direction":      trend_dir,
+                "recommended_action":   recommended,
+                "reasoning":            reasoning,
+                "agent_id":             self.name,
+            })
+
+        self.logger.info(
+            "Pre-emptive risk assessment: %d early-warning IP(s), %d action(s) recommended.",
+            len(early_warning_ips), len(preemptive_actions),
+        )
+
+        return {
+            "preemptive_actions":   preemptive_actions,
+            "total_early_warnings": len(early_warning_ips),
+            "timestamp":            datetime.now(timezone.utc).isoformat(),
+        }

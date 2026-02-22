@@ -25,8 +25,9 @@ except Exception:
     responder_app = None  # type: ignore[assignment]
 
 try:
-    from .evolver import EvolverAgent
+    from .evolver import Mahoraga, EvolverAgent
 except Exception:
+    Mahoraga = None      # type: ignore[assignment,misc]
     EvolverAgent = None  # type: ignore[assignment,misc]
 
 
@@ -72,5 +73,6 @@ __all__ = [
     "AnalyzerAgent",
     "responder_app",
     "ResponderAgent",
+    "Mahoraga",
     "EvolverAgent",
 ]
