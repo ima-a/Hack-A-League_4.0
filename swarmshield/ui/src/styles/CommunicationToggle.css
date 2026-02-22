@@ -1,0 +1,163 @@
+.communication-toggle {
+  width: 100%;
+  background: rgba(10, 14, 39, 0.8);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  border-radius: 12px;
+  padding: 25px;
+  backdrop-filter: blur(10px);
+}
+
+.toggle-header {
+  margin-bottom: 25px;
+  text-align: center;
+}
+
+.toggle-header h3 {
+  font-size: 1.5rem;
+  margin-bottom: 8px;
+}
+
+.toggle-header p {
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.connections-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.connection-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px;
+  background: rgba(255, 23, 68, 0.05);
+  border: 2px solid rgba(255, 23, 68, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.connection-card.active {
+  border-color: #ff1744;
+  background: rgba(255, 23, 68, 0.15);
+  box-shadow: 0 0 20px rgba(255, 23, 68, 0.3);
+}
+
+.connection-card:hover {
+  border-color: #ff1744;
+  background: rgba(255, 23, 68, 0.1);
+}
+
+.connection-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+}
+
+.connection-content {
+  flex: 1;
+}
+
+.connection-content h4 {
+  margin: 0 0 4px 0;
+  font-size: 1rem;
+}
+
+.connection-content p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.toggle-switch {
+  width: 50px;
+  height: 28px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  cursor: pointer;
+  background: #444;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.toggle-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.8rem;
+  transition: all 0.3s ease;
+}
+
+.connection-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff1744, transparent);
+  width: 0%;
+}
+
+.communication-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.info-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px;
+  background: rgba(255, 23, 68, 0.1);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  border-radius: 8px;
+}
+
+.info-box.healthy {
+  border-color: rgba(76, 175, 80, 0.3);
+  background: rgba(76, 175, 80, 0.05);
+}
+
+.info-label {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.info-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #ff1744;
+}
+
+.info-value.healthy {
+  color: #4caf50;
+}
+
+@media (max-width: 768px) {
+  .communication-toggle {
+    padding: 15px;
+  }
+
+  .connections-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toggle-header h3 {
+    font-size: 1.2rem;
+  }
+}

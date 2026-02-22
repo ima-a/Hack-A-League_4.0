@@ -1,0 +1,241 @@
+.agent-panels {
+  width: 100%;
+}
+
+.panels-title {
+  font-size: 1.5rem;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panels-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 20px;
+}
+
+.agent-panel {
+  background: rgba(10, 14, 39, 0.8);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  border-radius: 12px;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.agent-panel.scout {
+  border-top: 3px solid #00bcd4;
+}
+
+.agent-panel.analyzer {
+  border-top: 3px solid #9c27b0;
+}
+
+.agent-panel.responder {
+  border-top: 3px solid #ff5722;
+}
+
+.agent-panel.evolver {
+  border-top: 3px solid #f44336;
+}
+
+.agent-panel:hover {
+  border-color: rgba(255, 23, 68, 0.6);
+  box-shadow: 0 8px 32px rgba(255, 23, 68, 0.2);
+}
+
+.agent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  padding: 20px;
+  background: rgba(255, 23, 68, 0.05);
+  border-bottom: 1px solid rgba(255, 23, 68, 0.2);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.agent-header:hover {
+  background: rgba(255, 23, 68, 0.1);
+}
+
+.agent-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.agent-icon {
+  font-size: 2rem;
+}
+
+.agent-title h4 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.agent-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0px currentColor;
+  }
+  50% {
+    box-shadow: 0 0 8px currentColor;
+  }
+}
+
+.agent-content {
+  padding: 20px;
+}
+
+.agent-section {
+  margin-bottom: 20px;
+}
+
+.agent-section h5 {
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+.agent-section p {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.8);
+  font-style: italic;
+}
+
+.insights-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.insights-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: rgba(255, 23, 68, 0.05);
+  border-radius: 6px;
+  border-left: 2px solid #ff1744;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.insight-icon {
+  color: #ff1744;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.agent-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.metric {
+  background: rgba(255, 23, 68, 0.1);
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 23, 68, 0.2);
+}
+
+.metric-label {
+  display: block;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+}
+
+.metric-value {
+  display: block;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #ff1744;
+}
+
+.communication-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 6px;
+  margin-top: 15px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #4caf50;
+}
+
+.comm-arrow {
+  font-size: 1.2rem;
+  animation: arrow-pulse 1s ease-in-out infinite;
+}
+
+@keyframes arrow-pulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 1200px) {
+  .panels-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .panels-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-header {
+    padding: 15px;
+  }
+
+  .agent-content {
+    padding: 15px;
+  }
+
+  .agent-icon {
+    font-size: 1.5rem;
+  }
+
+  .agent-title h4 {
+    font-size: 1rem;
+  }
+}

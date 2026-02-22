@@ -1,0 +1,161 @@
+.network-logs {
+  width: 100%;
+  background: rgba(10, 14, 39, 0.8);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  border-radius: 12px;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid rgba(255, 23, 68, 0.2);
+  background: rgba(255, 23, 68, 0.05);
+}
+
+.logs-header h3 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+.clear-logs-btn {
+  background: transparent;
+  color: #ff1744;
+  padding: 8px;
+  border: 1px solid #ff1744;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.clear-logs-btn:hover {
+  background: rgba(255, 23, 68, 0.2);
+}
+
+.logs-container {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.logs-table-header {
+  display: grid;
+  grid-template-columns: 100px 120px 120px 130px 80px 70px 90px;
+  gap: 10px;
+  padding: 15px 20px;
+  background: rgba(255, 23, 68, 0.1);
+  border-bottom: 1px solid rgba(255, 23, 68, 0.2);
+  font-weight: 600;
+  font-size: 0.85rem;
+  position: sticky;
+  top: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 100px 120px 120px 130px 80px 70px 90px;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid rgba(255, 23, 68, 0.1);
+  align-items: center;
+  transition: background 0.3s ease;
+  font-size: 0.9rem;
+}
+
+.log-row:hover {
+  background: rgba(255, 23, 68, 0.05);
+}
+
+.log-col-time {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.log-col-source,
+.log-col-dest {
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.log-col-threat {
+  font-weight: 500;
+}
+
+.log-col-severity {
+  font-weight: 600;
+}
+
+.log-col-packets {
+  text-align: right;
+  font-weight: 500;
+}
+
+.log-col-status {
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(255, 23, 68, 0.1);
+  text-align: center;
+}
+
+.logs-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 1rem;
+}
+
+/* Scrollbar styling for logs */
+.logs-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.logs-container::-webkit-scrollbar-track {
+  background: rgba(255, 23, 68, 0.05);
+}
+
+.logs-container::-webkit-scrollbar-thumb {
+  background: #ff1744;
+  border-radius: 3px;
+}
+
+.logs-container::-webkit-scrollbar-thumb:hover {
+  background: #ff5252;
+}
+
+@media (max-width: 1200px) {
+  .logs-table-header,
+  .log-row {
+    grid-template-columns: 80px 100px 100px 110px 70px 60px 80px;
+    gap: 8px;
+  }
+
+  .logs-table-header {
+    font-size: 0.75rem;
+  }
+
+  .log-row {
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .logs-table-header,
+  .log-row {
+    grid-template-columns: repeat(7, 1fr);
+    font-size: 0.7rem;
+    gap: 5px;
+  }
+
+  .logs-container {
+    max-height: 300px;
+  }
+
+  .logs-header {
+    padding: 15px;
+  }
+}

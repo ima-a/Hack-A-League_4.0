@@ -1,0 +1,118 @@
+.dashboard {
+  width: 100%;
+  min-height: calc(100vh - 80px);
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 1fr;
+}
+
+.dashboard-header {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(255, 23, 68, 0.1) 0%, rgba(0, 188, 212, 0.1) 100%);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  border-radius: 12px;
+  padding: 30px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
+.header-content h2 {
+  font-size: 2rem;
+  margin-bottom: 10px;
+  background: linear-gradient(135deg, #ff1744 0%, #ff5252 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.header-content p {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.1rem;
+}
+
+.alert-system {
+  grid-column: 1 / -1;
+}
+
+.communication-toggle {
+  grid-column: 1 / -1;
+}
+
+.network-logs {
+  grid-column: 1 / -1;
+}
+
+.agent-panels {
+  grid-column: 1 / -1;
+}
+
+.agent-documentation {
+  grid-column: 1 / -1;
+}
+
+.doc-toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+.doc-button {
+  padding: 12px 30px;
+  font-size: 1rem;
+  background: linear-gradient(135deg, #ff1744 0%, #ff5252 100%);
+  border: none;
+  border-radius: 25px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(255, 23, 68, 0.3);
+}
+
+.doc-button:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(255, 23, 68, 0.5);
+}
+
+@media (max-width: 1200px) {
+  .dashboard {
+    padding: 15px;
+  }
+
+  .dashboard-grid {
+    gap: 15px;
+  }
+
+  .dashboard-header {
+    padding: 20px;
+  }
+
+  .header-content h2 {
+    font-size: 1.6rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard {
+    padding: 10px;
+  }
+
+  .dashboard-header {
+    padding: 15px;
+  }
+
+  .header-content h2 {
+    font-size: 1.3rem;
+  }
+
+  .header-content p {
+    font-size: 0.9rem;
+  }
+}
