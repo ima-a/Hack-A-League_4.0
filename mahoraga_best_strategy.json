@@ -1,0 +1,24 @@
+{
+  "best_genome": [
+    500.0,
+    300.0,
+    20.0,
+    3.5,
+    500000.0,
+    0.6
+  ],
+  "best_thresholds": {
+    "ddos_pps_threshold": 500.0,
+    "ddos_syn_threshold": 300.0,
+    "port_scan_unique_ip_thresh": 20.0,
+    "port_scan_entropy_threshold": 3.5,
+    "exfil_bps_threshold": 500000.0
+  },
+  "confidence_threshold": 0.6,
+  "best_fitness": 1.0,
+  "generations_run": 20,
+  "population_size": 30,
+  "outcomes_used": 12,
+  "timestamp": "2026-02-22T03:39:47.930464+00:00",
+  "llm_insight": null
+}

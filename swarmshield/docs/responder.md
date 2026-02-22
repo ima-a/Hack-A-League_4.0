@@ -1,93 +1,86 @@
 # Responder Agent
 
 Sources:
-- Service implementation: `src/swarmshield/agents/responder.py`
-- Thin wrapper class (used by unit tests): `src/swarmshield/agents/__init__.py` (`ResponderAgent`)
+- Service implementation: src/swarmshield/agents/responder.py
+- CrewAI tool wrappers: src/swarmshield/tools/responder_tool.py
+- Thin wrapper class (used by tests): src/swarmshield/agents/__init__.py (ResponderAgent)
 
 ## What it does
-The Responder Agent is a Flask service that receives verdicts (typically from Analyzer/Evolver), applies a defensive action, and logs/reports that action.
 
-Actions supported:
-- **block**: add `iptables` DROP rule for source IP
-- **redirect_to_honeypot**: add `iptables` DNAT rule to send traffic to a honeypot
-- **quarantine**: add `iptables` FORWARD DROP rules (both directions)
-- **monitor**: no enforcement, just logs
+The Responder Agent is the third stage in the SwarmShield pipeline. It receives the Analyzer risk assessment and applies the minimum-sufficient defense action for each confirmed threat. It also logs every action and auto-unblocks IPs after a configurable timeout to limit false positive impact.
 
-It also has a background loop that can auto-unblock / remove redirects after a timeout.
+## Actions supported
+
+    block                  - iptables DROP rule for source IP
+    redirect_to_honeypot   - iptables DNAT rule sending attack traffic to honeypot
+    quarantine             - iptables FORWARD DROP both directions
+    rate_limit             - iptables rate-limit rule
+    monitor                - no enforcement, log only
+
+## Defense decision logic (in apply_defense_actions)
+
+Given a threat with a confidence score:
+- confidence below 0.40:             monitor
+- DDoS or SYN flood detected:        block
+- PortScan detected:                 redirect_to_honeypot
+- Exfiltration detected:             quarantine
+- confidence 0.40 to 0.60 (other):  rate_limit
+- confidence above 0.60 (other):    block
+
+## Live mode vs dry-run mode
+
+LIVE_MODE=false (default): all actions are simulated and logged but no iptables rules are created.
+LIVE_MODE=true:            real iptables rules are applied. Requires root.
+
+Set LIVE_MODE before importing the package:
+
+    LIVE_MODE=true python run.py --live
+
+## Human approval gate
+
+When HUMAN_APPROVAL=true, the Responder pauses before each non-monitor action and prompts the operator with the IP, action, threat type, and confidence. The operator can approve (y), reject (n), or abort all remaining actions (a).
+
+A second approval layer is provided at the CrewAI task level (Task human_input=True): after the Responder task output is shown, CrewAI pauses and lets the operator review and add instructions before Evolver begins.
 
 ## Configuration
-Environment variables used by the service:
-- `COORDINATOR_IP` (default `192.168.1.100`)
-- `HONEYPOT_IP` (default `192.168.1.99`)
-- `RESPONDER_PORT` (default `5003`)
-- `RESPONDER_ID` (default `responder-1`)
-- `AUTO_UNBLOCK_SECONDS` (default `300`) or `AUTO_UNBLOCK_MINUTES` (default `5`)
 
-Files written at project root:
-- `blocked_ips.txt`
-- `responder_actions.log` (JSON lines)
+Environment variables:
 
-## Key sections in the implementation
-### 1) Command execution (`_run_cmd`)
-Runs system commands (like `iptables`) with `shell=False`, captures output, and returns a boolean success flag.
+    COORDINATOR_IP             - default 192.168.1.100
+    HONEYPOT_IP                - default 192.168.1.99
+    RESPONDER_PORT             - default 5003
+    RESPONDER_ID               - default responder-1
+    AUTO_UNBLOCK_SECONDS       - seconds before auto-unblock (default 300)
+    AUTO_UNBLOCK_MINUTES       - alternative to AUTO_UNBLOCK_SECONDS
+    LIVE_MODE                  - true or false (default false)
+    HUMAN_APPROVAL             - true or false (default false)
+    PREEMPTIVE_CONFIDENCE_GATE - confidence threshold for preemptive actions (default 0.40)
+    CONFIRMED_CONFIDENCE_GATE  - confidence threshold for confirmed actions (default 0.60)
 
-### 2) Core action functions
-- `block_ip(ip_address)`
-- `redirect_to_honeypot(ip_address)`
-- `quarantine_host(ip_address)`
-- `unblock_ip(ip_address)`
-- `remove_redirect(ip_address)`
+## Files written
 
-Each action logs to `responder_actions.log` via `log_action(...)`.
+    blocked_ips.txt            - list of currently blocked IPs (live mode)
+    responder_actions.log      - JSON-lines audit trail of all actions taken
 
-### 3) Reporting callbacks (`report_action_async`)
-Asynchronously POSTs the action result to:
-- Coordinator: `http://<COORDINATOR_IP>:5000/action_taken`
-- Dashboard: `http://<COORDINATOR_IP>:5005/update`
+Both files are written at the project root.
 
-Failures to reach these targets are logged but do not break verdict handling.
+## CrewAI tools
 
-### 4) Decision engine (`decide_and_act`)
-Given a verdict payload, selects the response.
+The Responder exposes three CrewAI @tool functions in tools/responder_tool.py:
 
-Priority order:
-1. Explicit `recommended_action`
-2. Fallback based on `predicted_attack_type`
+    apply_defense_actions(analyzer_report_json)    - main entry, applies all recommendations
+    block_ip_address(ip_address, reason)           - block a single IP immediately
+    get_active_blocks()                            - list currently blocked IPs
 
-### 5) Flask API
-#### `POST /verdict`
-Expected JSON fields:
-- `source_ip`
-- `predicted_attack_type`
-- `confidence`
-- `shap_explanation`
-- `recommended_action`
-- `agent_id`
+## Flask API (responder.py)
 
-Response:
-- `status`, `action_taken`, `success`, `agent_id`, `timestamp`
+The responder module also runs as a standalone Flask service for direct HTTP-based verdict delivery:
 
-If LLM validation is enabled, responses may also include:
-- `llm_validation` (a strict JSON object validating/overriding the proposed action)
+    POST /verdict          - receive a verdict payload and apply the action
+    GET  /health           - liveness probe
 
-#### `GET /health`
-Returns `{ "status": "alive", "agent_id": "responder-1" }` (agent id depends on `RESPONDER_ID`).
+Verdict payload fields: source_ip, predicted_attack_type, confidence, recommended_action, agent_id, shap_explanation.
 
-## ResponderAgent wrapper class
-`src/swarmshield/agents/__init__.py` contains a small `ResponderAgent` class used by unit tests.
+## Optional LLM validation
 
-It provides:
-- `deploy_mirage(config)` returning a summary dict (stub)
-- lightweight `block(ip)` / `redirect_to_honeypot(ip)` helpers (local stubs)
-
-## Optional LLM validation (Grok)
-Responder can validate the deterministic decision engine’s chosen action using the shared Grok-backed `LLMClient`.
-
-- The LLM is constrained to strict JSON output.
-- It is instructed to approve the deterministic action by default and only suggest an override when there is a concrete risk.
-
-## How to see it working
-Run the smoke test:
-- `tests/run_responder_agent.py`
-
-It exercises helper functions and Flask endpoints using Flask’s test client, with `subprocess.run` mocked so the tests don’t require `sudo`.
+If XAI_API_KEY is set, the Flask /verdict endpoint can validate the deterministic action choice via Grok before execution. The LLM is instructed to approve by default and only suggest overrides when there is a concrete risk. The LLM output is advisory only.

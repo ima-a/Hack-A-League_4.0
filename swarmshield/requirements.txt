@@ -1,9 +1,14 @@
+# CrewAI multi-agent orchestration
+crewai>=0.80.0
+crewai-tools>=0.14.0
+
 # Runtime dependencies
 flask==2.2.3
 requests==2.31.0
 openai>=1.0.0      # Grok (xAI) calls — optional; agents degrade gracefully without a key
 deap==1.4.3        # Genetic algorithm (Mahoraga evolver)
 scapy>=2.5.0       # Live packet capture (live_demo.py); optional — demo falls back gracefully
+python-dotenv>=1.0.0  # Load .env files for API keys and config
 
 # CIC-ML addon — XGBoost intrusion detection layer (light addon, non-critical)
 xgboost>=2.0.0

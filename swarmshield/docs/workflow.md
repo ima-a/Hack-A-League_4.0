@@ -1,189 +1,98 @@
-# SwarmShield Workflow (How Agents Help Each Other)
+# SwarmShield Workflow
 
-This document explains how each agent supports the others, where the workflow starts and ends, and why data travels through the system in that order.
+This document explains how the four agents support each other, where the workflow starts and ends, and why data flows in that order.
 
-## Big picture
-SwarmShield is designed as a pipeline:
+## Overview
 
-1. **Scout** observes network activity and produces **threat observations**.
-2. **Analyzer** consumes those observations, builds an **attack graph**, simulates spread, and produces a **risk assessment + recommended actions**.
-3. **Responder** consumes the verdict/recommendations and performs **enforcement actions** (block/redirect/quarantine/monitor), then logs and reports what happened.
-4. **Evolver** (optional) is intended to learn from outcomes and tune strategies over time. In the current codebase it is a stub.
+SwarmShield runs as a sequential multi-agent pipeline orchestrated by CrewAI:
 
-There is also an **optional LLM layer** (Grok via `LLMClient`) that can attach strictly-structured JSON insights/validation. The LLM never replaces deterministic scores or actions.
+1. Scout - detects network threats via Monte Carlo analysis and produces threat reports.
+2. Analyzer - builds an attack graph from Scout reports, runs propagation simulation, and produces a risk assessment with ranked recommendations.
+3. Responder - applies the minimum-necessary defense actions based on the Analyzer output (block, redirect to honeypot, quarantine, rate-limit, or monitor).
+4. Evolver (Mahoraga) - runs a DEAP genetic algorithm after each defense cycle to evolve Scout detection thresholds, minimizing false positives and false negatives.
 
-## Where it starts and where it ends
-### Start: data creation (Scout)
-The workflow starts when Scout runs a capture/detection cycle.
+There is also an optional LLM layer (Grok via LLMClient) that attaches structured JSON insights to reports. The LLM never replaces deterministic scores or enforcement decisions.
 
-- In this repo, `ScoutAgent.capture_packets()` generates synthetic packet metadata so the pipeline runs without privileged live capture.
-- Scout computes per-source statistics and determines whether each source IP looks malicious.
+## Entry points
 
-Output of this stage: a list of threat observation reports (one per suspicious source IP).
+To run the full pipeline:
 
-### End: enforcement + audit trail (Responder)
-The workflow ends when Responder has:
+    python run.py                          # demo mode, 1 iteration, dry-run
+    python run.py --mode interactive       # prompt for scenario, human-in-the-loop
+    python run.py --mode batch --iterations 5
+    python run.py --mode mcp-server        # start MCP server for external tools
 
-- chosen an action (based on a verdict),
-- executed it (or decided to monitor),
-- appended an action record to `responder_actions.log`, and
-- optionally reported the action to the coordinator/dashboard.
+Start and end:
+- Start: Scout captures (or simulates) network traffic and scores each source IP.
+- End: Evolver saves updated thresholds to mahoraga_best_strategy.json and returns the evolved genome.
 
-## Why the workflow travels Scout → Analyzer → Responder
-This ordering is intentional:
+## Data flow between agents
 
-- **Scout** is closest to raw signals (packet/flow metadata). It extracts features and detects anomalies.
-- **Analyzer** performs aggregation and reasoning across multiple Scout observations (graph building + propagation simulation) to determine severity and likely impact.
-- **Responder** is the actuator: it converts a verdict into a concrete mitigation action.
+### Scout output (feeds Analyzer)
 
-Keeping these concerns separated makes the system easier to test and reduces the risk of mixing detection logic with enforcement.
+One threat report per suspicious source IP:
 
-## What each agent gives to the next agent
-### 1) Scout → Analyzer: threat observations
-Typical fields:
-- `source_ip`
-- `attack_type` (e.g. `DDoS`, `PortScan`, `Exfiltration`)
-- `confidence` (0.0–1.0)
-- `stats` (pps/bps/unique destinations/SYN count/entropy)
-- `monte_carlo` (per-threat confidence values + `top_threat`)
-- `timestamp`
-- `agent_id`
-- optional: `llm_insight`
+    agent_id, event, source_ip, attack_type, confidence,
+    stats (pps, bps, unique_dest_ips, syn_count, port_entropy),
+    monte_carlo (per-type confidence scores, top_threat, top_confidence),
+    timestamp
 
-### 2) Analyzer → Responder: verdict + recommendation
-Analyzer turns many observations into a decision-ready output:
-- threat graph summary
-- Monte Carlo propagation simulation
-- risk assessment + recommendations
-- optional: `llm_insight`
+Optionally includes llm_insight if XAI_API_KEY is set.
 
-Responder expects a verdict payload with fields like:
-- `source_ip`
-- `predicted_attack_type`
-- `confidence`
-- `recommended_action` (e.g. `block`, `redirect_to_honeypot`, `quarantine`, `monitor`)
-- `agent_id`
-- `shap_explanation` (placeholder text in demos)
+### Analyzer output (feeds Responder)
 
-### 3) Responder → (optional) Evolver: outcomes
-Conceptually, Evolver would consume outcomes (what action was taken, whether it worked, false positives, etc.) to adjust thresholds/strategies.
+    threat_graph: {nodes, edges, summary}
+    simulation_results: list of Monte Carlo propagation trial dicts
+    risk_assessment: {risk_level, risk_score, avg_spread, top_threats, recommendations}
 
-In this repository, `EvolverAgent` exists but the strategy evolution logic is not implemented.
+### Responder output (feeds Evolver)
 
-## Practical demo workflow in this repo
-Because the full orchestrator logic is minimal/stubbed, the easiest way to see the workflow is via the smoke tests:
+    actions_applied: list of {ip, action, success, mode, timestamp}
+    summary: string description
+    risk_level: string
+    live_mode: bool
+    timestamp: string
 
-1. `tests/run_scout_agent.py`
-2. `tests/run_analyzer_agent.py`
-3. `tests/run_responder_agent.py`
+### Evolver output (end of cycle)
 
-## Notes on orchestration
-- `run.py`, `src/swarmshield/main.py`, and `src/swarmshield/crew.py` provide a CLI-style entry point and an orchestrator skeleton.
-- The end-to-end always-on wiring is intentionally not implemented; smoke tests demonstrate the contracts between agents.
-# SwarmShield Workflow (How Agents Help Each Other)
+    best_genome: list of 6 floats
+    best_thresholds: dict mapping threshold names to evolved values
+    confidence_threshold: float
+    best_fitness: float
+    generations_run: int
+    outcomes_used: int
+    llm_insight: dict or null
 
-This document explains how each agent supports the others, where the workflow starts and ends, and why data “travels” through the system in that order.
+## Why the ordering is Scout then Analyzer then Responder then Evolver
 
-## Big picture
-SwarmShield is designed as a pipeline:
+Scout is closest to raw signals (packet metadata). It extracts features and assigns confidence scores per source IP without making enforcement decisions.
 
-1. **Scout** observes network activity and produces **threat observations**.
-2. **Analyzer** consumes those observations, builds an **attack graph**, simulates spread, and produces a **risk assessment + recommended actions**.
-3. **Responder** consumes the verdict/recommendations and performs **enforcement actions** (block/redirect/quarantine/monitor), then logs and reports what happened.
-4. **Evolver** (optional) is intended to learn from outcomes and tune strategies over time. In the current codebase it’s a stub.
+Analyzer aggregates multiple Scout observations into a graph structure, runs propagation simulation to estimate lateral movement risk, and produces a single ranked action list. This keeps detection logic separate from enforcement logic.
 
-There is also an **optional LLM layer** (Grok via `LLMClient`) that can attach strictly-structured JSON insights/validation. The LLM never replaces deterministic scores or actions.
+Responder is the actuator. It converts the Analyzer's recommendations into concrete network enforcement actions. Separating this from detection makes the system safer to test and audit.
 
-## Where it starts and where it ends
-### Start: data creation (Scout)
-The workflow starts when the Scout runs a capture/detection cycle.
+Evolver runs last because it needs outcome data from the Responder to know whether each defense action was a true positive or false positive. It evolves thresholds for the next cycle.
 
-- In this repo, `ScoutAgent.capture_packets()` generates **synthetic packet metadata** (so the pipeline runs without privileged live capture).
-- Scout then computes per-source statistics and determines whether each source IP looks malicious.
+## A2A message bus
 
-Output of this stage: a list of **threat observation reports** (one per suspicious source IP).
+In addition to the CrewAI sequential task pipeline, agents publish events to a shared in-process message bus (no external broker required). Topics:
 
-### End: enforcement + audit trail (Responder)
-The workflow ends when the Responder has:
+    scout.tick              - fired after each Scout detection cycle
+    scout.early_warning     - fired when predicted confidence crosses early-warning threshold
+    analyzer.pre_assessment - fired before full risk assessment with preliminary data
+    analyzer.assessment     - fired with final risk level and score
+    responder.action        - fired after each enforcement action (one per IP)
+    mahoraga.evolved        - fired when Evolver completes a GA run
 
-- chosen an action (based on a verdict),
-- executed it (or decided to monitor),
-- appended an action record to `responder_actions.log`, and
-- optionally reported the action to the Coordinator/Dashboard.
+Subscribers (crew.py logging handlers and the TransparencyReporter) receive these events alongside the main task pipeline output.
 
-Why this is the “end”: after enforcement, the system has taken concrete defensive steps and left an auditable trail of what it did.
+## Human approval
 
-## Why the workflow travels Scout → Analyzer → Responder
-This ordering is intentional:
+When HUMAN_APPROVAL=true is set:
 
-- **Scout is closest to raw signals** (packet/flow metadata). It extracts features and detects anomalies.
-- **Analyzer performs aggregation and reasoning** across multiple Scout observations (graph building + propagation simulation) to determine severity and likely impact.
-- **Responder is the actuator**. It takes the final decision and turns it into real-world mitigation actions.
+1. Before each enforcement action in apply_defense_actions, a prompt asks the operator to approve, reject, or abort all remaining actions.
+2. After the Responder task completes, CrewAI pauses and shows the full task output to the operator before Evolver begins (Task level human_input=True).
 
-Keeping these concerns separated makes the system easier to test (each agent has clear inputs/outputs) and reduces the risk of mixing detection logic with enforcement.
+## Transparency
 
-## What each agent gives to the next agent
-### 1) Scout → Analyzer: “Threat observation”
-Scout produces a structured report per suspicious source IP.
-
-Typical fields (as produced by the Scout implementation):
-- `source_ip`
-- `attack_type` (e.g. `DDoS`, `PortScan`, `Exfiltration`)
-- `confidence` (0.0–1.0)
-- `stats` (pps/bps/unique destinations/SYN count/entropy)
-- `monte_carlo` (per-threat confidence values + `top_threat`)
-- `timestamp`
-- `agent_id`
-
-How it helps: Analyzer doesn’t need raw packets; it needs a compact, comparable “observation” format.
-
-### 2) Analyzer → Responder: “Verdict + recommendation”
-Analyzer’s job is to turn many observations into a decision-ready output:
-
-- **Threat graph**: nodes/edges summarizing suspicious sources.
-- **Simulation results**: Monte Carlo propagation trials.
-- **Risk assessment**: `risk_level`, `risk_score`, spread metrics, and recommended actions.
-
-The Responder Flask service expects a verdict payload with fields like:
-- `source_ip`
-- `predicted_attack_type`
-- `confidence`
-- `recommended_action` (e.g. `block`, `redirect_to_honeypot`, `quarantine`, `monitor`)
-- `agent_id`
-- `shap_explanation` (can be a placeholder string in demos)
-
-How it helps: Responder should not do “analysis”; it should do “action”. Analyzer packages the decision into a simple contract.
-
-### 3) Responder → (optional) Evolver: “Outcome feedback”
-Conceptually, Evolver would consume outcomes (what action was taken, whether it worked, false positives, etc.) to adjust thresholds/strategies.
-
-In the current repository:
-- `EvolverAgent` exists but the genetic algorithm logic is not implemented yet.
-
-## Agent roles in one sentence each
-- **Scout**: *Feature extraction + anomaly scoring per source IP.*
-- **Analyzer**: *Correlation + simulation + risk scoring + recommendations.*
-- **Responder**: *Mitigation actions + logging/reporting.*
-- **Evolver**: *Strategy tuning over time (planned).*
-
-## Practical “demo” workflow in this repo
-Because the full orchestrator logic is minimal/stubbed, the easiest way to see the workflow is via the smoke tests:
-
-1. Run Scout smoke test to generate observations:
-   - `tests/run_scout_agent.py`
-2. Run Analyzer smoke test to build graphs and assess risk:
-   - `tests/run_analyzer_agent.py`
-3. Run Responder smoke test to verify verdict handling and actions:
-   - `tests/run_responder_agent.py`
-
-These scripts intentionally feed test data and print outputs to show each agent is working in isolation.
-
-## Notes on orchestration (entry points)
-- `run.py` / `src/swarmshield/main.py` / `src/swarmshield/crew.py` provide a CLI-style entry point and a crew orchestrator skeleton.
-- The agent-to-agent “wiring” (feeding real Scout observations into Analyzer, then sending Analyzer verdicts to Responder over HTTP) is represented by interfaces and smoke tests, not a single always-on coordinator loop.
-
-If you want, I can wire a minimal coordinator loop that:
-- calls `ScoutAgent.detect_anomalies()`
-- passes results into `AnalyzerAgent.model_threat_graph()` / `simulate_attack()` / `assess_risk()`
-- POSTs a verdict to the Responder’s `/verdict` endpoint
-—but I didn’t add that here since you asked only for documentation.
+When TRANSPARENCY_CONSOLE=true (default), the TransparencyReporter prints each agent thought, tool call, and result to the terminal in real time. A JSON log is also written to transparency.log (configurable via TRANSPARENCY_LOG_FILE).

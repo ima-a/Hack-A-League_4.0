@@ -1,146 +1,139 @@
 # What We Use and Why
 
-This document explains every major technology, pattern, and library in SwarmShield, and the reasoning behind each choice.
-
----
+This document explains every major technology, pattern, and library in SwarmShield and the reasoning behind each choice.
 
 ## Core design principles
 
 | Principle | Implementation |
 |---|---|
-| Detection must be deterministic | Monte Carlo scoring — repeatable and measurable |
-| LLM enrichment must be optional | Graceful fallback when `XAI_API_KEY` is absent |
-| Enforcement must be auditable | JSON-lines action log in `responder_actions.log` |
-| Tests must run without root | `subprocess.run` mocked in pytest; synthetic packet gen in Scout |
-
----
+| Detection must be deterministic | Monte Carlo scoring: repeatable and measurable |
+| LLM enrichment must be optional | Graceful fallback when XAI_API_KEY is absent |
+| Enforcement must be auditable | JSON-lines action log in responder_actions.log |
+| Tests must run without root | subprocess.run mocked in pytest; synthetic packet gen in Scout |
+| Agents must stay decoupled | A2A message bus for cross-agent events; CrewAI handles sequential orchestration |
 
 ## Language and project layout
 
-**Python 3.9+**
-Chosen for its data processing ecosystem and straightforward networking libraries.
+Python 3.9+
+Chosen for its data processing ecosystem and networking libraries.
 
-**`src/` layout (`src/swarmshield/...`)**
-Avoids Python import shadowing (if you run `pytest` from the repo root, `import swarmshield` always resolves to the installed package rather than a local folder). A `conftest.py` at the repo root adds the `src/` directory to `sys.path` for tests.
+src/ layout (src/swarmshield/...)
+Avoids Python import shadowing. A conftest.py at the repo root adds src/ to sys.path for tests.
 
----
+## Multi-agent orchestration: CrewAI
+
+CrewAI 1.9.3 orchestrates the four-agent sequential pipeline:
+Scout -> Analyzer -> Responder -> Evolver
+
+Each agent is a CrewAI Agent with a role, goal, backstory, and a list of tools. The four tasks are wired as a sequential Process. Context from each task is passed to the next task automatically.
+
+Key CrewAI concepts used:
+- Agent(role, goal, backstory, tools, llm, verbose, allow_delegation)
+- Task(description, expected_output, agent, context, human_input)
+- Crew(agents, tasks, process, step_callback, task_callback)
+- Process.sequential
+
+The crew is rebuilt on each kickoff call (not a singleton) so batch mode can run multiple iterations cleanly.
+
+## A2A message bus
+
+An in-process pub/sub message bus (utils/message_bus.py) allows agents to broadcast events independently of the CrewAI task pipeline. No external broker is needed.
+
+Topics: scout.tick, scout.early_warning, analyzer.pre_assessment, analyzer.assessment, responder.action, mahoraga.evolved
+
+Each tool publishes to the bus after completing its main work. Subscribers (crew.py logging handlers and TransparencyReporter) receive events in the same thread.
+
+## MCP server
+
+FastMCP (mcp 1.23.3) exposes all 11 SwarmShield tools plus the A2A bus status as a Model Context Protocol server. This lets external MCP-compatible hosts (Claude Desktop, VS Code Copilot) call the tools directly.
+
+Transport options: stdio (default, for local hosts) or streamable-http (for networked agents).
 
 ## Agents
 
-### Scout — `src/swarmshield/agents/scout.py`
-**What it does**: per-IP feature extraction and anomaly scoring.
-
-**Why these techniques:**
+### Scout - src/swarmshield/agents/scout.py
 
 | Technique | Reason |
 |---|---|
-| Sliding-window statistics (pps, bps, port entropy, SYN count) | Fast, explainable features — no model training needed |
-| Monte Carlo scoring (1 000 trials/IP) | Adds robustness to metric noise without a dedicated static threshold |
+| Sliding-window per-IP statistics | Fast, explainable features: pps, bps, unique_dest_ips, syn_count, port_entropy |
+| Monte Carlo scoring (1000 trials per IP) | Adds robustness to metric noise without needing a trained model |
 | Shannon entropy on destination ports | Compact signal for distinguishing port scans from normal traffic |
-| Rolling inference + trend extrapolation | Surfaces "early warning" before hard threshold is crossed |
+| Rolling inference and trend extrapolation | Surfaces early warnings before the hard threshold is crossed |
 
-**Rolling inference detail**: the Scout maintains a time-bounded buffer (default 60 s) and a per-IP confidence history. A simple linear regression on recent snapshots predicts near-future confidence. If the predicted value crosses `EARLY_WARNING_THRESHOLD` (0.40) before the current value crosses `CONFIDENCE_THRESHOLD` (0.60), the alert level is `early_warning`.
-
-### Analyzer — `src/swarmshield/agents/analyzer.py`
-**What it does**: correlation + impact estimation from many Scout observations.
-
-**Why these techniques:**
+### Analyzer - src/swarmshield/agents/analyzer.py
 
 | Technique | Reason |
 |---|---|
-| Threat graph (nodes = IPs, edges = coordinated-attack inference) | Minimal structure needed to reason about coordinated attacks |
-| Edge inference rule (shared threat type + both conf > 0.50) | Conservative: avoids false coordination claims |
-| Monte Carlo propagation simulation | Estimates worst-case spread without needing a real network model |
-| Risk score = 0.6 × max_confidence + 0.4 × avg_spread | Weighs severity (confidence) more heavily than spread |
+| Threat graph (nodes = IPs, edges = inferred coordination) | Minimal structure for reasoning about multi-source attacks |
+| Edge inference rule: shared threat type + both confidence above 0.50 | Conservative: avoids false coordination claims |
+| Monte Carlo propagation simulation | Estimates worst-case lateral movement without a real network model |
+| risk_score = 0.6 * max_confidence + 0.4 * avg_spread | Weights threat severity more heavily than spread |
 
-### Responder — `src/swarmshield/agents/responder.py`
-**What it does**: enforce mitigation actions and create an audit trail.
-
-**Why these choices:**
+### Responder - src/swarmshield/agents/responder.py
 
 | Choice | Reason |
 |---|---|
-| Flask service (HTTP POST `/verdict`) | Clean boundary: Analyzer/Evolver sends a verdict over HTTP; Responder stays decoupled |
-| `iptables` (DROP / DNAT / FORWARD DROP) | Native OS enforcement — no additional agent/daemon needed |
-| JSON-lines action log | Append-only, parseable audit trail; used by the auto-unblock background thread |
-| Auto-unblock thread | Prevents permanent blocks from false positives; configurable via `AUTO_UNBLOCK_SECONDS` |
-| `subprocess.run` with `shell=False` | Avoids shell injection; timeout prevents hanging |
+| iptables (DROP, DNAT, FORWARD DROP) | Native OS enforcement without extra daemons |
+| JSON-lines action log | Append-only, parseable audit trail used by the auto-unblock thread |
+| Auto-unblock thread | Limits impact of false positives; configurable via AUTO_UNBLOCK_SECONDS |
+| subprocess.run with shell=False | Avoids shell injection; timeout prevents hanging |
+| Flask service for /verdict endpoint | Clean boundary for direct HTTP verdict delivery |
 
-### Evolver — `src/swarmshield/agents/evolver.py`
-**Status**: planned, currently a stub.
+### Evolver (Mahoraga) - src/swarmshield/agents/evolver.py
 
-**Intended technique**: genetic algorithm (DEAP) to evolve detection thresholds and response strategies using historical outcome data (false positive rate, block success).
+| Choice | Reason |
+|---|---|
+| DEAP genetic algorithm | Evolves 6-gene threshold chromosome against real defense-cycle outcomes |
+| FP penalized 2x in fitness | Blocking legitimate traffic is more disruptive than missing a threat |
+| Synthetic fallback scenarios | Allows the GA to run from day one before real outcomes exist |
+| Per-gene Gaussian mutation (MUT_SIGMA) | Appropriate step sizes per threshold scale (pps vs bps have very different ranges) |
+| DEFAULT_GENOME as seed individual | Gives the GA a known-good starting point |
 
----
+## Transparency and human approval
 
-## LLM integration — Grok (xAI)
+TransparencyReporter (utils/transparency.py) hooks into CrewAI via step_callback and task_callback. It prints each agent thought, tool call, and result in real time. It also subscribes to all A2A bus topics.
 
-**Library**: OpenAI Python SDK (`openai>=1.0.0`) with a custom `base_url=https://api.x.ai/v1`.
-**Why compatible SDK**: xAI's Grok API is OpenAI-compatible, so we avoid needing a separate xAI-specific package.
+Human approval is implemented at two layers:
+1. Tool level: in apply_defense_actions, an operator prompt fires before each non-monitor action when HUMAN_APPROVAL=true.
+2. Task level: Task(human_input=True) on the Responder task pauses the CrewAI pipeline after the full task output is shown, allowing operator review before Evolver begins.
+
+## LLM integration - Grok via xAI API
+
+Library: OpenAI Python SDK (openai>=1.0.0) with base_url=https://api.x.ai/v1.
 
 | Design choice | Reason |
 |---|---|
-| `temperature=0.0` | Fully deterministic; minimizes creative drift |
-| `response_format={"type": "json_object"}` | Forces JSON output; no prose to parse |
-| Grounded prompts ("this value is GROUND TRUTH") | Prevents LLM from overriding computed scores |
-| Graceful fallback (`LLMClient.available`) | If `XAI_API_KEY` absent or `openai` not installed, agents continue without LLM |
-| LLM enriches / validates — never decides | Keeps the core pipeline deterministic and testable |
+| temperature=0.0 | Fully deterministic |
+| response_format json_object | Forces JSON output, no prose to parse |
+| Grounded prompts | Agents tell the LLM the numerical values are ground truth; LLM cannot override them |
+| Graceful fallback | If XAI_API_KEY absent or openai not installed, agents continue without LLM enrichment |
+| LLM enriches and validates only | Keeps the core pipeline deterministic and testable |
 
-**Where LLM output appears:**
-- Scout: `llm_insight` in threat reports and rolling-tick entries (attack subtype, kill-chain stage, urgency)
-- Analyzer: `llm_insight` in risk assessment (correlation type, lateral movement risk)
-- Responder: `llm_validation` in `/verdict` responses (action validated, collateral risk, escalation flag)
+## Flask
 
----
-
-## Web service layer
-
-**Flask 2.2** (`flask==2.2.3`)
-Used only for the Responder's HTTP API. Lightweight enough not to require a full WSGI setup for demos.
-
-**Requests** (`requests==2.31.0`)
-Used by Responder to POST action reports to the coordinator and dashboard endpoints (fire-and-forget threads).
-
----
+Flask 2.2 is used exclusively for the Responder HTTP service (/verdict, /health) and the HoneypotBridge (/honeypot_event, /honeypot_events, /honeypot_health). Lightweight enough for demos without a full WSGI setup.
 
 ## Testing
 
-**pytest** (`pytest==7.4.0`)
-Standard Python test runner. The test suite must be run via `.venv/bin/pytest` because system Python lacks the required dependencies.
+pytest runs the 24-test suite in tests/test_crew.py. All tests use mocking and synthetic data. No root, no network, no real API keys required.
 
-**`conftest.py`** at repo root adds `src/` to `sys.path` so `from src.swarmshield...` imports work without installing the package.
+conftest.py at the repo root adds src/ to sys.path.
 
-**Smoke scripts** (`tests/run_*_agent.py`)
-Run each agent end-to-end with synthetic data and print outputs. Useful for quick demos and debugging without needing to run the full test suite.
-
----
-
-## What is deliberately NOT installed / not used
-
-| Package in old requirements.txt | Why removed |
-|---|---|
-| `crewai`, `crewai-tools` | Not actually imported anywhere in the working codebase |
-| `tensorflow`, `torch`, `torch-geometric` | ML models planned for future work; no agent uses them now |
-| `scapy`, `pyshark` | Planned for live packet capture; `PacketCaptureTool` is a stub |
-| `deap` | Planned for genetic evolution; `EvolutionTool` and `EvolverAgent` are stubs |
-| `streamlit`, `pandas`, `matplotlib`, `seaborn`, `plotly` | Dashboard planned; no dashboard code present |
-| `networkx` | Threat graph uses plain lists/dicts; no `networkx` calls exist in any agent |
-| `scikit-learn` | No ML model training exists in the working codebase |
-| `python-dotenv`, `pydantic`, `pyyaml` | Not imported by any working agent file |
-| `jupyter`, `notebook`, `ipython` | No notebook files in the repo |
-
----
+Smoke scripts (tests/run_*_agent.py) run individual agents end-to-end with synthetic data for quick demos.
 
 ## File structure summary
 
-```
-src/swarmshield/
-  agents/        # Working implementations (scout, analyzer, responder, evolver, llm_client)
-  tools/         # Stub tool classes (packet capture, patrol, threat sim, response, evolution)
-  main.py        # Entry point module (skeleton)
-  crew.py        # Orchestrator skeleton (TODO)
-tests/
-  test_*.py      # Unit tests (43 passing)
-  run_*_agent.py # Smoke scripts
-docs/            # This documentation set
-```
+    src/swarmshield/
+      agents/          - Scout, Analyzer, Responder, Evolver, LLMClient, HoneypotBridge
+      tools/           - CrewAI @tool wrappers for all agents (scout_tool, analyzer_tool, responder_tool, evolution_tool)
+      utils/           - message_bus, ml_classifier, transparency
+      crew.py          - SwarmShieldCrew orchestrator
+      main.py          - main() entry point
+      mcp_server.py    - FastMCP server (11 tools + bus status resource)
+    tests/
+      test_crew.py     - 24-test suite (all mocked, no credentials needed)
+      run_*_agent.py   - smoke scripts
+    docs/              - this documentation set
+    run.py             - CLI launcher (demo, interactive, batch, mcp-server modes)
+    run.sh             - shell launcher with auto-venv activation
+    requirements.txt   - pinned dependencies

@@ -4,6 +4,13 @@ SwarmShield Main Entry Point
 Primary execution module for the CrewAI-based multi-agent system.
 """
 
+# Load .env before anything else so API keys and config are in os.environ
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed — env vars must be set manually
+
 import logging
 import sys
 from pathlib import Path
