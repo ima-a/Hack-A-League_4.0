@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>SwarmShield — Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#030d08;--bg2:#060f0a;--bg3:#0a1510;--bg4:#0d1c14;
+  --border:#0d2a1a;--border2:#133a22;--border3:#1a4d2e;
+  --green:#00ff41;--green2:#00cc33;--green3:#009922;--green-glow:rgba(0,255,65,0.12);
+  --red:#ff0040;--red2:#cc0033;--red-glow:rgba(255,0,64,0.15);
+  --yellow:#ffcc00;--cyan:#00ffcc;--purple:#cc44ff;--orange:#ff8800;
+  --text:#8aff9d;--text2:#4dcc66;--text-dim:#1a6633;--text-bright:#ccffdd;
+  --font-mono:'JetBrains Mono',monospace;--font-head:'Orbitron',sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-mono);font-size:12px;overflow:hidden}
+body{display:flex;flex-direction:column}
+#root{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:var(--bg2)}
+::-webkit-scrollbar-thumb{background:var(--border3);border-radius:2px}
+/* scanline overlay */
+body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px);pointer-events:none;z-index:9999}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
+const C = {
+  bg:'#030d08', bg2:'#060f0a', bg3:'#0a1510', bg4:'#0d1c14',
+  border:'#0d2a1a', border2:'#133a22', border3:'#1a4d2e',
+  green:'#00ff41', green2:'#00cc33', greenGlow:'rgba(0,255,65,0.12)',
+  red:'#ff0040', redGlow:'rgba(255,0,64,0.15)',
+  yellow:'#ffcc00', cyan:'#00ffcc', purple:'#cc44ff', orange:'#ff8800',
+  text:'#8aff9d', text2:'#4dcc66', textDim:'#1a6633', textBright:'#ccffdd',
+};
+
+// ─── GLOBAL STYLES injected once ──────────────────────────────────────────────
+const GLOBAL_CSS = `
+@keyframes pulse-green{0%,100%{box-shadow:0 0 8px rgba(0,255,65,.3)}50%{box-shadow:0 0 22px rgba(0,255,65,.7),0 0 40px rgba(0,255,65,.2)}}
+@keyframes pulse-red{0%,100%{box-shadow:0 0 10px rgba(255,0,64,.5)}50%{box-shadow:0 0 30px rgba(255,0,64,.9),0 0 60px rgba(255,0,64,.3)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+@keyframes scan{0%{background-position:0 -100%}100%{background-position:0 200%}}
+@keyframes slide-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.slide-in{animation:slide-in .25s ease-out}
+.fade-in{animation:fade-in .4s ease-out}
+`;
+
+function useGlobalStyle() {
+  useEffect(()=>{
+    const s=document.createElement('style'); s.textContent=GLOBAL_CSS;
+    document.head.appendChild(s); return ()=>document.head.removeChild(s);
+  },[]);
+}
+
+// ─── SOCKET ────────────────────────────────────────────────────────────────────
+function useSocket(setData, addLog, addAction, addPacketRow, addHoneypot, setQuery) {
+  const socketRef = useRef(null);
+  useEffect(()=>{
+    const socket = io('/');
+    socketRef.current = socket;
+    socket.on('connect',()=> addLog('info','system','Connected to SwarmShield backend.'));
+    socket.on('disconnect',()=> addLog('warn','system','Connection lost — reconnecting...'));
+    socket.on('snapshot', data => setData(d=>({...d,
+      under_attack: data.under_attack, attack_ip: data.attack_ip,
+      attack_type: data.attack_type, attack_conf: data.attack_conf,
+      total_blocked: data.total_blocked||0, total_trapped: data.total_trapped||0,
+      ticks_seen: data.ticks_seen||0, total_packets: data.total_packets||0,
+      pps_series: data.pps_series||[], kbps_series: data.kbps_series||[],
+      labels: data.labels||[],
+      scout_log: data.scout_log||[], analyzer_log: data.analyzer_log||[],
+      responder_log: data.responder_log||[], evolver_log: data.evolver_log||[],
+    })));
+    socket.on('scout_tick', data => {
+      setData(d=>({...d,
+        under_attack: data.under_attack, attack_ip: data.attack_ip,
+        attack_type: data.attack_type, attack_conf: data.attack_conf,
+        ticks_seen: (d.ticks_seen||0)+1,
+        total_packets: (d.total_packets||0)+(data.buf||0),
+        pps_series: data.pps_series||d.pps_series||[],
+        kbps_series: data.kbps_series||d.kbps_series||[],
+        labels: data.labels||d.labels||[],
+        cur_pps: data.pps||0, cur_kbps: data.kbps||0,
+      }));
+      const lvl = data.ct ? 'crit' : data.ew ? 'warn' : 'info';
+      addLog(lvl,'scout', `TICK  buf=${data.buf}pkts  early=${data.ew}  confirmed=${data.ct}  pps=${data.pps}`);
+      if(data.packet_rows) data.packet_rows.forEach(r=>addPacketRow(r));
+    });
+    socket.on('early_warning', data => {
+      addLog('warn','scout', `EARLY WARNING — ${data.ips.join(', ')}`);
+    });
+    socket.on('analyzer_event', data => {
+      const lvl = data.risk_level==='critical'?'crit':(data.actions&&data.actions.length?'warn':'info');
+      addLog(lvl,'analyzer', data.text);
+    });
+    socket.on('responder_action', data => {
+      setData(d=>({...d,
+        total_blocked: data.total_blocked||d.total_blocked||0,
+        total_trapped: data.total_trapped||d.total_trapped||0,
+      }));
+      addLog(data.level||'info','responder', data.text);
+      addAction({ts:data.ts, action:data.action, ip:data.ip, success:data.success});
+    });
+    socket.on('evolver_event', data => {
+      addLog('info','evolver', data.text);
+      addAction({ts:data.ts, action:'evolved', ip:'mahoraga', success:true});
+    });
+    socket.on('honeypot_capture', data => addHoneypot(data));
+    socket.on('agent_log', data => addLog(data.level||'info', data.agent, data.text));
+    socket.on('query_response', data => setQuery(q=>[...q.slice(-49), {role:'ai', text:data.answer, ts:data.ts}]));
+    return ()=>socket.disconnect();
+  },[]);
+  return socketRef;
+}
+
+// ─── CHART ─────────────────────────────────────────────────────────────────────
+function TrafficChart({ labels, pps, kbps }) {
+  const canvasRef = useRef(null);
+  const chartRef  = useRef(null);
+  useEffect(()=>{
+    if(!canvasRef.current) return;
+    chartRef.current = new Chart(canvasRef.current, {
+      type:'line',
+      data:{
+        labels:[],
+        datasets:[
+          {label:'PPS', data:[], borderColor:'#00ff41', backgroundColor:'rgba(0,255,65,.07)',
+           borderWidth:1.5, pointRadius:0, tension:.4, fill:true, yAxisID:'y1'},
+          {label:'kBPS', data:[], borderColor:'#ffcc00', backgroundColor:'rgba(255,204,0,.04)',
+           borderWidth:1.5, pointRadius:0, tension:.4, fill:true, yAxisID:'y2'},
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false, animation:{duration:200},
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{labels:{color:'#1a6633', font:{family:'JetBrains Mono',size:10}}},
+          tooltip:{backgroundColor:'#060f0a', borderColor:'#0d2a1a', borderWidth:1,
+                   titleColor:'#00ff41', bodyColor:'#8aff9d',
+                   titleFont:{family:'JetBrains Mono',size:10}, bodyFont:{family:'JetBrains Mono',size:10}},
+        },
+        scales:{
+          x:{ticks:{color:'#1a6633', maxTicksLimit:8, font:{family:'JetBrains Mono',size:9}},
+             grid:{color:'rgba(13,42,26,.6)'}},
+          y1:{type:'linear', position:'left',
+              ticks:{color:'#00ff41', font:{family:'JetBrains Mono',size:9}},
+              grid:{color:'rgba(13,42,26,.4)'},
+              title:{display:true, text:'PPS', color:'#00ff41', font:{family:'JetBrains Mono',size:9}}},
+          y2:{type:'linear', position:'right',
+              ticks:{color:'#ffcc00', font:{family:'JetBrains Mono',size:9}},
+              grid:{drawOnChartArea:false},
+              title:{display:true, text:'kBPS', color:'#ffcc00', font:{family:'JetBrains Mono',size:9}}},
+        }
+      }
+    });
+    return ()=>chartRef.current?.destroy();
+  },[]);
+  useEffect(()=>{
+    const c=chartRef.current; if(!c) return;
+    c.data.labels = labels.slice(-60);
+    c.data.datasets[0].data = pps.slice(-60);
+    c.data.datasets[1].data = kbps.slice(-60);
+    c.update('none');
+  },[labels,pps,kbps]);
+  return <canvas ref={canvasRef} style={{width:'100%',height:'100%'}}/>;
+}
+
+// ─── SMALL COMPONENTS ─────────────────────────────────────────────────────────
+const Tag = ({label, color='#00ff41', bg}) => (
+  <span style={{display:'inline-block', padding:'1px 6px', borderRadius:'2px',
+    border:`1px solid ${color}`, color, background: bg||`rgba(${hexToRgb(color)},.12)`,
+    fontSize:'9px', fontWeight:700, letterSpacing:'1px', fontFamily:'var(--font-mono)'}}>
+    {label}
+  </span>
+);
+
+function hexToRgb(hex) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return `${r},${g},${b}`;
+}
+
+const Panel = ({title, accent='#00ff41', children, style={}, headerRight}) => (
+  <div style={{background:'var(--bg2)', border:`1px solid var(--border2)`,
+    borderTop:`2px solid ${accent}`, display:'flex', flexDirection:'column',
+    overflow:'hidden', ...style}}>
+    <div style={{padding:'6px 12px', background:'var(--bg3)', borderBottom:'1px solid var(--border)',
+      display:'flex', alignItems:'center', gap:'8px', flexShrink:0}}>
+      <span style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px',
+        color: accent, fontWeight:700}}>{title}</span>
+      {headerRight && <span style={{marginLeft:'auto', fontSize:'9px', color:'var(--text-dim)'}}>{headerRight}</span>}
+    </div>
+    {children}
+  </div>
+);
+
+const Dot = ({active, color='#00ff41', size=8, glow=true}) => (
+  <div style={{width:`${size}px`, height:`${size}px`, borderRadius:'50%',
+    background: active ? color : 'var(--text-dim)',
+    boxShadow: active && glow ? `0 0 8px ${color}` : 'none',
+    animation: active ? `blink 1s infinite` : 'none', flexShrink:0}} />
+);
+
+// ─── AGENT LOG PANEL ───────────────────────────────────────────────────────────
+function AgentLog({ lines, accent, height='100%' }) {
+  const scrollRef = useRef(null);
+  useEffect(()=>{
+    if(scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  },[lines]);
+  const levelColor = l => l==='crit' ? '#ff0040' : l==='warn' ? '#ff8800' : '#1a6633';
+  const levelBorder = l => l==='crit' ? '#ff0040' : l==='warn' ? '#ff8800' : '#0d2a1a';
+  return (
+    <div ref={scrollRef} style={{flex:1, overflowY:'auto', padding:'6px 8px', height, minHeight:0}}>
+      {lines.map((l,i)=>(
+        <div key={i} className="slide-in" style={{
+          fontFamily:'var(--font-mono)', fontSize:'10px', lineHeight:'1.6',
+          marginBottom:'1px', paddingLeft:'6px', whiteSpace:'pre-wrap', wordBreak:'break-all',
+          borderLeft:`2px solid ${levelBorder(l.level)}`, color: levelColor(l.level),
+        }}>
+          <span style={{color:'var(--text-dim)', marginRight:'6px'}}>{l.ts}</span>
+          {l.text}
+        </div>
+      ))}
+      {lines.length===0 && <div style={{color:'var(--text-dim)',fontStyle:'italic',padding:'8px'}}>Waiting for events...</div>}
+    </div>
+  );
+}
+
+// ─── ATTACK ORB ────────────────────────────────────────────────────────────────
+function AttackOrb({ under_attack, attack_ip, attack_type, attack_conf }) {
+  const pct = Math.round((attack_conf||0)*100);
+  return (
+    <div style={{textAlign:'center', padding:'16px 12px', borderBottom:'1px solid var(--border)'}}>
+      {/* Orb */}
+      <div style={{display:'inline-flex', alignItems:'center', justifyContent:'center',
+        width:'90px', height:'90px', borderRadius:'50%', marginBottom:'10px', position:'relative',
+        background: under_attack
+          ? 'radial-gradient(circle, rgba(255,0,64,.15) 0%, transparent 70%)'
+          : 'radial-gradient(circle, rgba(0,255,65,.08) 0%, transparent 70%)',
+        border: `2px solid ${under_attack ? '#ff0040' : '#00ff41'}`,
+        animation: under_attack ? 'pulse-red 0.6s ease-in-out infinite' : 'pulse-green 2.5s ease-in-out infinite',
+      }}>
+        <div style={{fontSize:'32px', lineHeight:1}}>
+          {under_attack ? '⚠' : '🛡'}
+        </div>
+        {/* Scanning ring */}
+        <div style={{position:'absolute', inset:'-6px', borderRadius:'50%',
+          border:`1px solid ${under_attack ? 'rgba(255,0,64,.3)' : 'rgba(0,255,65,.2)'}`,
+          animation:'spin 4s linear infinite'}}/>
+      </div>
+      <div style={{fontFamily:'var(--font-head)', fontSize:'10px', letterSpacing:'3px', fontWeight:700,
+        color: under_attack ? '#ff0040' : '#00ff41',
+        animation: under_attack ? 'blink .7s infinite' : 'none',
+      }}>
+        {under_attack ? 'UNDER ATTACK' : 'SYSTEM SECURE'}
+      </div>
+      {under_attack && (
+        <div style={{marginTop:'10px', textAlign:'left', fontSize:'10px'}}>
+          <div style={{display:'flex', justifyContent:'space-between', marginBottom:'3px'}}>
+            <span style={{color:'var(--text-dim)'}}>Attacker</span>
+            <span style={{color:'#ff0040', fontWeight:600}}>{attack_ip}</span>
+          </div>
+          <div style={{display:'flex', justifyContent:'space-between', marginBottom:'3px'}}>
+            <span style={{color:'var(--text-dim)'}}>Type</span>
+            <span style={{color:'#ff8800'}}>{attack_type}</span>
+          </div>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <span style={{color:'var(--text-dim)'}}>Conf</span>
+            <span style={{color:'#ff0040'}}>{pct}%</span>
+          </div>
+          <div style={{height:'3px', background:'var(--border)', borderRadius:'2px', marginTop:'4px', overflow:'hidden'}}>
+            <div style={{height:'100%', width:`${pct}%`, background:'#ff0040',
+              borderRadius:'2px', transition:'width .5s', boxShadow:'0 0 6px #ff0040'}}/>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── STATS COUNTERS ────────────────────────────────────────────────────────────
+function StatsGrid({ stats }) {
+  const items = [
+    {k:'PACKETS', v: fmtN(stats.total_packets||0), color:'#00ff41'},
+    {k:'TICKS',   v: stats.ticks_seen||0,           color:'#00ffcc'},
+    {k:'BLOCKED', v: stats.total_blocked||0,         color:'#ff0040'},
+    {k:'TRAPPED', v: stats.total_trapped||0,         color:'#cc44ff'},
+  ];
+  return (
+    <div style={{padding:'10px 12px', borderBottom:'1px solid var(--border)'}}>
+      <div style={{fontFamily:'var(--font-head)', fontSize:'8px', letterSpacing:'2px',
+        color:'var(--text-dim)', marginBottom:'8px'}}>DEFENSE METRICS</div>
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px'}}>
+        {items.map(({k,v,color})=>(
+          <div key={k} style={{background:'var(--bg3)', border:`1px solid var(--border2)`,
+            borderRadius:'2px', padding:'7px 8px', textAlign:'center'}}>
+            <div style={{fontSize:'18px', fontWeight:700, color, lineHeight:1.1,
+              textShadow:`0 0 8px ${color}`}}>{v}</div>
+            <div style={{fontSize:'8px', color:'var(--text-dim)', letterSpacing:'1px', marginTop:'2px'}}>{k}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function fmtN(n) {
+  if(n>=1e6) return (n/1e6).toFixed(1)+'M';
+  if(n>=1e3) return (n/1e3).toFixed(1)+'K';
+  return String(n);
+}
+
+// ─── ACTION FEED ───────────────────────────────────────────────────────────────
+function ActionFeed({ actions }) {
+  const ref = useRef(null);
+  useEffect(()=>{ if(ref.current) ref.current.scrollTop = ref.current.scrollHeight; },[actions]);
+  const cfg = {
+    block:       {c:'#ff0040', label:'BLOCK'},
+    quarantine:  {c:'#ff0040', label:'QUARANTINE'},
+    deploy_honeypot:{c:'#cc44ff', label:'HONEYPOT'},
+    rate_limit:  {c:'#ff8800', label:'RATE LIMIT'},
+    monitor:     {c:'#00ffcc', label:'MONITOR'},
+    evolved:     {c:'#00ff41', label:'EVOLVED'},
+    redirect_to_honeypot:{c:'#cc44ff', label:'REDIRECT'},
+  };
+  return (
+    <div style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden',
+      minHeight:0, padding:'8px 12px'}}>
+      <div style={{fontFamily:'var(--font-head)', fontSize:'8px', letterSpacing:'2px',
+        color:'var(--text-dim)', marginBottom:'6px', flexShrink:0}}>RESPONDER ACTIONS</div>
+      <div ref={ref} style={{flex:1, overflowY:'auto', minHeight:0}}>
+        {actions.length===0 && <div style={{color:'var(--text-dim)',fontStyle:'italic',fontSize:'10px'}}>No actions yet.</div>}
+        {actions.slice().reverse().map((a,i)=>{
+          const meta = cfg[a.action] || {c:'#00ff41', label:(a.action||'?').toUpperCase()};
+          return (
+            <div key={i} className="slide-in" style={{display:'flex', gap:'6px', marginBottom:'3px',
+              alignItems:'center', padding:'2px 4px', borderRadius:'2px',
+              background: i===0 ? `rgba(${hexToRgb(meta.c)},.04)` : 'transparent'}}>
+              <span style={{color:'var(--text-dim)', fontSize:'9px', flexShrink:0}}>{a.ts}</span>
+              <Tag label={meta.label} color={meta.c}/>
+              <span style={{color:'#8aff9d', fontSize:'10px', overflow:'hidden',
+                textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1}}>{a.ip}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── PACKET TABLE ──────────────────────────────────────────────────────────────
+function PacketTable({ rows }) {
+  const ref = useRef(null);
+  useEffect(()=>{ if(ref.current) ref.current.scrollTop=0; },[rows.length]);
+  const statusStyle = s => s==='BLOCK'
+    ? {color:'#ff0040', background:'rgba(255,0,64,.1)', border:'1px solid #ff0040'}
+    : s==='WARN'
+    ? {color:'#ff8800', background:'rgba(255,136,0,.1)', border:'1px solid #ff8800'}
+    : {color:'#00ff41', background:'rgba(0,255,65,.05)', border:'1px solid #00ff41'};
+  const TH = ({ch}) => <th style={{position:'sticky',top:0,background:'var(--bg3)',
+    padding:'5px 8px', textAlign:'left', fontSize:'9px', letterSpacing:'1px',
+    color:'var(--text-dim)', borderBottom:'1px solid var(--border)', whiteSpace:'nowrap'}}>{ch}</th>;
+  return (
+    <div ref={ref} style={{flex:1, overflowY:'auto', minHeight:0}}>
+      <table style={{width:'100%', borderCollapse:'collapse'}}>
+        <thead><tr>
+          {['TIME','SRC IP','PPS','kBPS','SYN','THREAT','CONF','STATUS'].map(h=><TH key={h} ch={h}/>)}
+        </tr></thead>
+        <tbody>
+          {rows.slice(0,200).map((r,i)=>(
+            <tr key={i} style={{background: r.status==='BLOCK'?'rgba(255,0,64,.04)':
+              r.status==='WARN'?'rgba(255,136,0,.03)':'transparent'}}>
+              {[r.ts, r.ip, r.pps, r.bps, r.syn, r.threat, `${r.conf||0}%`].map((v,j)=>(
+                <td key={j} style={{padding:'3px 8px', borderBottom:'1px solid rgba(13,42,26,.5)',
+                  fontSize:'10px', whiteSpace:'nowrap',
+                  color: r.status==='BLOCK'?'#ff4060': r.status==='WARN'?'#ff8800':'#8aff9d'}}>{v}</td>
+              ))}
+              <td style={{padding:'3px 8px', borderBottom:'1px solid rgba(13,42,26,.5)'}}>
+                <span style={{...statusStyle(r.status), padding:'1px 5px', borderRadius:'2px',
+                  fontSize:'9px', fontWeight:700}}>{r.status}</span>
+              </td>
+            </tr>
+          ))}
+          {rows.length===0 && <tr><td colSpan={8} style={{padding:'12px 8px', color:'var(--text-dim)',
+            fontStyle:'italic', textAlign:'center'}}>Waiting for traffic...</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── HONEYPOT FEED ─────────────────────────────────────────────────────────────
+function HoneypotFeed({ hits }) {
+  const ref = useRef(null);
+  useEffect(()=>{ if(ref.current) ref.current.scrollTop = ref.current.scrollHeight; },[hits]);
+  return (
+    <div ref={ref} style={{flex:1, overflowY:'auto', padding:'6px 10px', minHeight:0}}>
+      {hits.length===0 && <div style={{color:'var(--text-dim)',fontStyle:'italic',padding:'8px'}}>
+        No trap captures yet. Waiting for attacker to probe decoy ports...</div>}
+      {hits.map((h,i)=>(
+        <div key={i} className="slide-in" style={{padding:'6px 8px',
+          borderBottom:'1px solid rgba(13,42,26,.5)', marginBottom:'2px'}}>
+          <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
+            <span style={{color:'var(--text-dim)', fontSize:'9px'}}>{h.ts||h.timestamp}</span>
+            <Tag label={h.service||'TRAP'} color='#cc44ff'/>
+            <span style={{color:'#cc44ff', fontWeight:600}}>{h.source_ip}</span>
+            <span style={{color:'var(--text-dim)'}}>port {h.port}</span>
+          </div>
+          {h.data && <div style={{marginTop:'3px', color:'var(--text-dim)', fontSize:'9px',
+            fontStyle:'italic', paddingLeft:'4px', wordBreak:'break-all'}}>
+            &gt; {h.data.substring(0,120)}{h.data.length>120?'...':''}
+          </div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── AGENT DOCS ────────────────────────────────────────────────────────────────
+function AgentDocs({ docs }) {
+  const [selected, setSelected] = useState('scout');
+  const keys = Object.keys(docs);
+  const doc = docs[selected];
+  if(!doc) return <div style={{padding:'20px',color:'var(--text-dim)'}}>Loading docs...</div>;
+  return (
+    <div style={{display:'flex', flex:1, overflow:'hidden', minHeight:0}}>
+      {/* Sidebar */}
+      <div style={{width:'160px', flexShrink:0, borderRight:'1px solid var(--border)', overflowY:'auto', padding:'8px'}}>
+        {keys.map(k=>{
+          const d = docs[k];
+          const active = k===selected;
+          return (
+            <div key={k} onClick={()=>setSelected(k)} style={{
+              padding:'8px 10px', cursor:'pointer', borderRadius:'2px', marginBottom:'4px',
+              border:`1px solid ${active ? d.color : 'transparent'}`,
+              background: active ? `rgba(${hexToRgb(d.color)},.08)` : 'transparent',
+              transition:'all .2s',
+            }}>
+              <div style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'1px',
+                color: active ? d.color : 'var(--text-dim)', fontWeight:700}}>{d.name}</div>
+              <div style={{fontSize:'9px', color:'var(--text-dim)', marginTop:'2px'}}>{d.role}</div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Doc content */}
+      <div style={{flex:1, overflowY:'auto', padding:'16px 20px', minWidth:0}}>
+        <div style={{borderBottom:`1px solid ${doc.color}`, paddingBottom:'12px', marginBottom:'16px'}}>
+          <div style={{fontFamily:'var(--font-head)', fontSize:'16px', color:doc.color,
+            letterSpacing:'2px', marginBottom:'4px'}}>{doc.name}</div>
+          <div style={{color:'var(--text-dim)', fontSize:'11px', letterSpacing:'1px'}}>{doc.role}</div>
+        </div>
+        <div style={{color:'#8aff9d', lineHeight:'1.7', marginBottom:'16px', fontSize:'11px'}}>{doc.description}</div>
+        <div style={{marginBottom:'16px'}}>
+          <div style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px',
+            color:doc.color, marginBottom:'8px'}}>HOW IT WORKS</div>
+          {doc.how_it_works.map((s,i)=>(
+            <div key={i} style={{display:'flex', gap:'8px', marginBottom:'6px', fontSize:'11px'}}>
+              <span style={{color:doc.color, flexShrink:0, fontWeight:700}}>{String(i+1).padStart(2,'0')}</span>
+              <span style={{color:'var(--text)'}}>{s}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{marginBottom:'16px'}}>
+          <div style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px',
+            color:doc.color, marginBottom:'8px'}}>OUTPUTS</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:'6px'}}>
+            {doc.outputs.map((o,i)=><Tag key={i} label={o} color={doc.color}/>)}
+          </div>
+        </div>
+        <div>
+          <div style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px',
+            color:doc.color, marginBottom:'8px'}}>HANDLES</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:'6px'}}>
+            {doc.attack_types.map((a,i)=><Tag key={i} label={a} color='#00ffcc'/>)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── QUERY ENGINE ──────────────────────────────────────────────────────────────
+function QueryEngine({ messages, setMessages }) {
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const feedRef = useRef(null);
+  useEffect(()=>{ if(feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; },[messages]);
+
+  const suggestions = [
+    'What attack is happening right now?',
+    'How many IPs have been blocked?',
+    'Explain what the Scout agent is doing',
+    'What is Mahoraga and how does it evolve?',
+    'What should I do if under heavy DDoS?',
+    'Show me the current defense status',
+  ];
+
+  const send = async (text=null) => {
+    const q = (text || input).trim();
+    if(!q) return;
+    setMessages(m=>[...m, {role:'user', text:q, ts:new Date().toLocaleTimeString()}]);
+    setInput(''); setLoading(true);
+    try {
+      const r = await fetch('/api/query', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({query:q}),
+      });
+      const data = await r.json();
+      setMessages(m=>[...m, {role:'ai', text: data.answer || data.error, ts: new Date().toLocaleTimeString()}]);
+    } catch(e) {
+      setMessages(m=>[...m, {role:'ai', text:'Connection error — backend may be starting up.', ts:''}]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{display:'flex', flexDirection:'column', flex:1, overflow:'hidden', minHeight:0, padding:'0'}}>
+      {/* Suggestions */}
+      <div style={{padding:'10px 16px', borderBottom:'1px solid var(--border)', flexShrink:0}}>
+        <div style={{fontSize:'9px', color:'var(--text-dim)', letterSpacing:'1px', marginBottom:'8px',
+          fontFamily:'var(--font-head)'}}>QUICK QUERIES</div>
+        <div style={{display:'flex', flexWrap:'wrap', gap:'6px'}}>
+          {suggestions.map((s,i)=>(
+            <button key={i} onClick={()=>send(s)} style={{
+              background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--text2)',
+              padding:'4px 10px', borderRadius:'2px', cursor:'pointer', fontSize:'10px',
+              fontFamily:'var(--font-mono)', transition:'all .2s',
+            }} onMouseEnter={e=>{e.target.style.borderColor='#00ff41';e.target.style.color='#00ff41'}}
+               onMouseLeave={e=>{e.target.style.borderColor='var(--border2)';e.target.style.color='var(--text2)'}}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Chat feed */}
+      <div ref={feedRef} style={{flex:1, overflowY:'auto', padding:'12px 16px', minHeight:0}}>
+        {messages.length===0 && (
+          <div style={{textAlign:'center', padding:'40px 20px', color:'var(--text-dim)'}}>
+            <div style={{fontSize:'32px', marginBottom:'12px'}}>🛡</div>
+            <div style={{fontFamily:'var(--font-head)', fontSize:'12px', letterSpacing:'2px',
+              color:'#00ff41', marginBottom:'8px'}}>SWARMSHIELD AI ASSISTANT</div>
+            <div style={{fontSize:'11px'}}>Ask anything about the current attack, system status, or how the agents work.</div>
+          </div>
+        )}
+        {messages.map((m,i)=>(
+          <div key={i} className="slide-in" style={{
+            marginBottom:'12px', display:'flex',
+            justifyContent: m.role==='user' ? 'flex-end' : 'flex-start',
+          }}>
+            <div style={{
+              maxWidth:'80%', padding:'8px 12px', borderRadius:'3px', lineHeight:'1.6',
+              fontSize:'11px',
+              background: m.role==='user' ? 'rgba(0,255,65,.08)' : 'var(--bg3)',
+              border: `1px solid ${m.role==='user' ? 'rgba(0,255,65,.3)' : 'var(--border2)'}`,
+              color: m.role==='user' ? '#00ff41' : '#8aff9d',
+              borderTopRightRadius: m.role==='user' ? 0 : 3,
+              borderTopLeftRadius:  m.role==='ai'   ? 0 : 3,
+            }}>
+              <div style={{fontSize:'8px', color:'var(--text-dim)', marginBottom:'4px', letterSpacing:'1px'}}>
+                {m.role==='user' ? 'OPERATOR' : '> SWARMSHIELD AI'}
+                {m.ts && ` · ${m.ts}`}
+              </div>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{display:'flex', gap:'6px', alignItems:'center', color:'#00ff41', fontSize:'11px'}}>
+            <div style={{width:'6px', height:'6px', borderRadius:'50%', background:'#00ff41',
+              animation:'blink .5s infinite'}}/>
+            <div style={{width:'6px', height:'6px', borderRadius:'50%', background:'#00ff41',
+              animation:'blink .5s infinite .15s'}}/>
+            <div style={{width:'6px', height:'6px', borderRadius:'50%', background:'#00ff41',
+              animation:'blink .5s infinite .3s'}}/>
+          </div>
+        )}
+      </div>
+      {/* Input */}
+      <div style={{padding:'10px 16px', borderTop:'1px solid var(--border)', flexShrink:0,
+        display:'flex', gap:'8px', alignItems:'center'}}>
+        <span style={{color:'#00ff41', fontFamily:'var(--font-mono)', fontSize:'13px',
+          flexShrink:0, marginRight:'2px', animation:'blink 1.2s infinite'}}>▶</span>
+        <input
+          value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }}}
+          placeholder="Ask about threats, agents, stats, or what to do next..."
+          style={{flex:1, background:'transparent', border:'none', outline:'none',
+            color:'#00ff41', fontFamily:'var(--font-mono)', fontSize:'12px',
+            caretColor:'#00ff41'}}
+        />
+        <button onClick={()=>send()} disabled={loading} style={{
+          background: loading ? 'var(--bg3)' : 'rgba(0,255,65,.1)',
+          border:`1px solid ${loading ? 'var(--border)' : '#00ff41'}`,
+          color: loading ? 'var(--text-dim)' : '#00ff41',
+          padding:'5px 14px', cursor: loading ? 'not-allowed' : 'pointer',
+          fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px', borderRadius:'2px',
+        }}>SEND</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── NAVBAR ────────────────────────────────────────────────────────────────────
+function Navbar({ under_attack, live_mode, iface, activeTab, setTab }) {
+  const [time, setTime] = useState('');
+  useEffect(()=>{
+    const t=setInterval(()=>{ const d=new Date();
+      setTime([d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':'));
+    },1000); return ()=>clearInterval(t);
+  },[]);
+  const tabs = ['DASHBOARD','TRAFFIC','AGENTS','DOCS','QUERY'];
+  return (
+    <div style={{background:'var(--bg3)', borderBottom:'1px solid var(--border2)',
+      padding:'0 16px', height:'48px', display:'flex', alignItems:'center',
+      gap:'16px', flexShrink:0, zIndex:100}}>
+      {/* Logo */}
+      <div style={{fontFamily:'var(--font-head)', fontSize:'15px', fontWeight:900,
+        letterSpacing:'3px', color:'#00ff41', textShadow:'0 0 12px rgba(0,255,65,.5)',
+        whiteSpace:'nowrap'}}>
+        SWARM<span style={{color:'#00ffcc'}}>SHIELD</span>
+      </div>
+      <div style={{color:'var(--text-dim)', fontSize:'9px', letterSpacing:'1px', whiteSpace:'nowrap'}}>
+        COMMAND CENTER
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex', gap:'2px', marginLeft:'16px', flex:1}}>
+        {tabs.map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{
+            background: activeTab===t ? 'rgba(0,255,65,.1)' : 'transparent',
+            border: activeTab===t ? '1px solid rgba(0,255,65,.4)' : '1px solid transparent',
+            color: activeTab===t ? '#00ff41' : 'var(--text-dim)',
+            padding:'4px 12px', cursor:'pointer', fontFamily:'var(--font-head)',
+            fontSize:'9px', letterSpacing:'2px', borderRadius:'2px', transition:'all .2s',
+            borderBottom: activeTab===t ? '1px solid #00ff41' : '1px solid transparent',
+          }}>{t}</button>
+        ))}
+      </div>
+
+      {/* Right: status */}
+      <div style={{display:'flex', alignItems:'center', gap:'10px', flexShrink:0}}>
+        <div style={{
+          display:'flex', alignItems:'center', gap:'8px', padding:'4px 14px',
+          border:`1px solid ${under_attack ? '#ff0040' : '#00ff41'}`,
+          borderRadius:'2px',
+          background: under_attack ? 'rgba(255,0,64,.06)' : 'rgba(0,255,65,.05)',
+          animation: under_attack ? 'pulse-red .8s infinite' : 'none',
+        }}>
+          <Dot active size={8} color={under_attack ? '#ff0040' : '#00ff41'}/>
+          <span style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px',
+            color: under_attack ? '#ff0040' : '#00ff41',
+            animation: under_attack ? 'blink .6s infinite' : 'none'}}>
+            {under_attack ? 'UNDER ATTACK' : 'SECURE'}
+          </span>
+        </div>
+        <span style={{fontSize:'9px', padding:'4px 8px', border:'1px solid var(--border2)',
+          borderRadius:'2px', color:'var(--text-dim)', whiteSpace:'nowrap'}}>
+          {iface || '--'}
+        </span>
+        <span style={{color:live_mode ? '#ff0040' : '#ffcc00', fontSize:'9px', padding:'3px 8px',
+          border:`1px solid ${live_mode ? '#ff0040' : '#ffcc00'}`, borderRadius:'2px',
+          fontWeight:700, fontFamily:'var(--font-head)', letterSpacing:'1px'}}>
+          {live_mode ? 'LIVE' : 'SIM'}
+        </span>
+        <span style={{color:'#00ffcc', fontFamily:'var(--font-mono)', fontSize:'12px',
+          minWidth:'72px', textAlign:'right'}}>{time}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD TAB ─────────────────────────────────────────────────────────────
+function DashboardTab({ data, logs, actions, packetRows, honeypot }) {
+  return (
+    <div style={{display:'grid', gridTemplateColumns:'220px 1fr', flex:1,
+      overflow:'hidden', minHeight:0}}>
+      {/* Sidebar */}
+      <div style={{background:'var(--bg2)', borderRight:'1px solid var(--border2)',
+        display:'flex', flexDirection:'column', overflow:'hidden'}}>
+        <AttackOrb {...data}/>
+        <StatsGrid stats={data}/>
+        <ActionFeed actions={actions}/>
+      </div>
+      {/* Main */}
+      <div style={{display:'grid', gridTemplateRows:'190px 1fr',
+        overflow:'hidden', minHeight:0}}>
+        {/* Agent pipeline */}
+        <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)',
+          gap:'1px', background:'var(--border)', borderBottom:'1px solid var(--border2)'}}>
+          {[
+            {key:'scout',    label:'SCOUT',    role:'DETECT',  accent:'#00ff41', logs: logs.scout},
+            {key:'analyzer', label:'ANALYZER', role:'ASSESS',  accent:'#ffcc00', logs: logs.analyzer},
+            {key:'responder',label:'RESPONDER',role:'ACT',     accent:'#ff0040', logs: logs.responder},
+            {key:'evolver',  label:'MAHORAGA', role:'EVOLVE',  accent:'#cc44ff', logs: logs.evolver},
+          ].map(a=>{
+            const active = a.logs.some(l=>Date.now()-new Date().setHours(...(a.logs[a.logs.length-1]?.ts||'00:00:00').split(':').map(Number))<5000);
+            const lvl = a.logs.length ? a.logs[a.logs.length-1].level : 'info';
+            return (
+              <div key={a.key} style={{background:'var(--bg3)', display:'flex',
+                flexDirection:'column', overflow:'hidden', borderTop:`2px solid ${a.accent}`}}>
+                <div style={{padding:'6px 10px', background:'var(--bg4)',
+                  borderBottom:'1px solid var(--border)',
+                  display:'flex', alignItems:'center', gap:'8px', flexShrink:0}}>
+                  <Dot active={a.logs.length>0} color={a.accent} size={7}/>
+                  <span style={{fontFamily:'var(--font-head)', fontSize:'9px', letterSpacing:'2px',
+                    color:a.accent, fontWeight:700, flex:1}}>{a.label}</span>
+                  <span style={{fontSize:'8px', color:'var(--text-dim)', letterSpacing:'1px'}}>{a.role}</span>
+                </div>
+                <AgentLog lines={a.logs} accent={a.accent}/>
+              </div>
+            );
+          })}
+        </div>
+        {/* Bottom panels */}
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr',
+          gridTemplateRows:'1fr 1fr', gap:'1px', background:'var(--border)',
+          overflow:'hidden', minHeight:0}}>
+          <Panel title="NETWORK TRAFFIC" accent='#00ff41'
+            headerRight={`${data.cur_pps||0} pps / ${data.cur_kbps||0} kbps`}
+            style={{minHeight:0}}>
+            <div style={{flex:1, padding:'8px', minHeight:0}}>
+              <TrafficChart labels={data.labels||[]} pps={data.pps_series||[]} kbps={data.kbps_series||[]}/>
+            </div>
+          </Panel>
+          <Panel title="LIVE PACKET ANALYSIS" accent='#00ffcc'
+            headerRight={`${packetRows.length} rows`} style={{minHeight:0}}>
+            <PacketTable rows={packetRows}/>
+          </Panel>
+          <Panel title="HONEYPOT CAPTURES" accent='#cc44ff'
+            headerRight={`${honeypot.length} caught`} style={{minHeight:0}}>
+            <HoneypotFeed hits={honeypot}/>
+          </Panel>
+          <Panel title="A2A EVENT STREAM" accent='#ffcc00' style={{minHeight:0}}>
+            <AgentLog lines={[...logs.scout,...logs.analyzer,...logs.responder,...logs.evolver]
+              .slice(-60).sort((a,b)=>(a.ts||'').localeCompare(b.ts||''))} accent='#ffcc00'/>
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TRAFFIC TAB ───────────────────────────────────────────────────────────────
+function TrafficTab({ data, packetRows }) {
+  return (
+    <div style={{display:'flex', flexDirection:'column', flex:1, overflow:'hidden', minHeight:0, padding:'12px', gap:'12px'}}>
+      <Panel title="TRAFFIC TIMELINE — PPS + kBPS" accent='#00ff41'
+        headerRight={`${data.cur_pps||0} pps / ${data.cur_kbps||0} kbps`}
+        style={{height:'280px', flexShrink:0}}>
+        <div style={{flex:1, padding:'10px', minHeight:0}}>
+          <TrafficChart labels={data.labels||[]} pps={data.pps_series||[]} kbps={data.kbps_series||[]}/>
+        </div>
+      </Panel>
+      <Panel title="FULL PACKET ANALYSIS TABLE" accent='#00ffcc'
+        headerRight={`${packetRows.length} entries`} style={{flex:1, minHeight:0}}>
+        <PacketTable rows={packetRows}/>
+      </Panel>
+    </div>
+  );
+}
+
+// ─── AGENTS TAB ────────────────────────────────────────────────────────────────
+function AgentsTab({ logs }) {
+  const agents = [
+    {key:'scout',    label:'SCOUT', role:'DETECT',  accent:'#00ff41'},
+    {key:'analyzer', label:'ANALYZER', role:'ASSESS', accent:'#ffcc00'},
+    {key:'responder',label:'RESPONDER', role:'ACT', accent:'#ff0040'},
+    {key:'evolver',  label:'MAHORAGA', role:'EVOLVE', accent:'#cc44ff'},
+  ];
+  return (
+    <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gridTemplateRows:'1fr 1fr',
+      gap:'1px', background:'var(--border)', flex:1, overflow:'hidden', minHeight:0}}>
+      {agents.map(a=>(
+        <Panel key={a.key} title={`${a.label} — THOUGHT STREAM`} accent={a.accent}
+          headerRight={`${logs[a.key]?.length||0} events`} style={{minHeight:0}}>
+          <AgentLog lines={logs[a.key]||[]} accent={a.accent}/>
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+// ─── DOCS TAB ──────────────────────────────────────────────────────────────────
+function DocsTab() {
+  const [docs, setDocs] = useState({});
+  useEffect(()=>{ fetch('/api/docs').then(r=>r.json()).then(setDocs).catch(()=>{}); },[]);
+  return (
+    <div style={{flex:1, overflow:'hidden', display:'flex', flexDirection:'column', minHeight:0}}>
+      <div style={{padding:'10px 16px', borderBottom:'1px solid var(--border)', flexShrink:0}}>
+        <span style={{fontFamily:'var(--font-head)', fontSize:'11px', letterSpacing:'3px',
+          color:'#00ff41'}}>AGENT DOCUMENTATION</span>
+        <span style={{marginLeft:'12px', color:'var(--text-dim)', fontSize:'10px'}}>
+          Architecture, roles, and technical details of each SwarmShield agent
+        </span>
+      </div>
+      <div style={{flex:1, overflow:'hidden', minHeight:0, display:'flex'}}>
+        {Object.keys(docs).length ? <AgentDocs docs={docs}/> :
+          <div style={{padding:'20px',color:'var(--text-dim)'}}>Loading documentation...</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── ROOT APP ──────────────────────────────────────────────────────────────────
+function App() {
+  useGlobalStyle();
+  const [tab, setTab] = useState('DASHBOARD');
+  const [data, setData] = useState({
+    under_attack:false, attack_ip:'', attack_type:'', attack_conf:0,
+    total_blocked:0, total_trapped:0, ticks_seen:0, total_packets:0,
+    pps_series:[], kbps_series:[], labels:[], cur_pps:0, cur_kbps:0,
+    interface:'', live_mode:false,
+  });
+  const [logs, setLogs] = useState({scout:[],analyzer:[],responder:[],evolver:[]});
+  const [actions, setActions]       = useState([]);
+  const [packetRows, setPacketRows] = useState([]);
+  const [honeypot, setHoneypot]     = useState([]);
+  const [queryMsgs, setQueryMsgs]   = useState([]);
+
+  const addLog = useCallback((level, agent, text) => {
+    const ts = new Date().toLocaleTimeString();
+    if(!['scout','analyzer','responder','evolver'].includes(agent)) return;
+    setLogs(l=>({...l, [agent]: [...l[agent].slice(-79), {level,text,ts}]}));
+  },[]);
+
+  const addAction = useCallback(r => setActions(a=>[...a.slice(-99), r]),[]);
+
+  const addPacketRow = useCallback(r => setPacketRows(p=>[r,...p.slice(0,199)]),[]);
+
+  const addHoneypot = useCallback(h => setHoneypot(p=>[...p.slice(-49), h]),[]);
+
+  // Load initial state
+  useEffect(()=>{
+    fetch('/api/state').then(r=>r.json()).then(d=>{
+      setData(prev=>({...prev,
+        under_attack:d.under_attack, attack_ip:d.attack_ip,
+        attack_type:d.attack_type, attack_conf:d.attack_conf/100,
+        total_blocked:d.total_blocked||0, total_trapped:d.total_trapped||0,
+        ticks_seen:d.ticks_seen||0, total_packets:d.total_packets||0,
+        pps_series:d.pps_series||[], kbps_series:d.kbps_series||[],
+        labels:d.labels||[], interface:d.interface||'',
+        live_mode:d.live_mode||false,
+      }));
+      ['scout','analyzer','responder','evolver'].forEach(k=>{
+        if(d[`${k}_log`]) setLogs(l=>({...l, [k]: d[`${k}_log`]}));
+      });
+      if(d.actions) setActions(d.actions);
+      if(d.packet_rows) setPacketRows(d.packet_rows.slice().reverse());
+      if(d.honeypot_hits) setHoneypot(d.honeypot_hits);
+    }).catch(()=>{});
+  },[]);
+
+  useSocket(setData, addLog, addAction, addPacketRow, addHoneypot, setQueryMsgs);
+
+  return (
+    <div style={{display:'flex', flexDirection:'column', height:'100%', overflow:'hidden'}}>
+      <Navbar
+        under_attack={data.under_attack}
+        live_mode={data.live_mode}
+        iface={data.interface}
+        activeTab={tab}
+        setTab={setTab}
+      />
+      <div style={{flex:1, display:'flex', overflow:'hidden', minHeight:0}}>
+        {tab==='DASHBOARD' && <DashboardTab data={data} logs={logs} actions={actions}
+          packetRows={packetRows} honeypot={honeypot}/>}
+        {tab==='TRAFFIC'   && <TrafficTab data={data} packetRows={packetRows}/>}
+        {tab==='AGENTS'    && <AgentsTab logs={logs}/>}
+        {tab==='DOCS'      && <DocsTab/>}
+        {tab==='QUERY'     && (
+          <div style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0}}>
+            <div style={{padding:'10px 16px', borderBottom:'1px solid var(--border)', flexShrink:0}}>
+              <span style={{fontFamily:'var(--font-head)', fontSize:'11px', letterSpacing:'3px', color:'#00ff41'}}>
+                AI QUERY ENGINE
+              </span>
+              <span style={{marginLeft:'12px', color:'var(--text-dim)', fontSize:'10px'}}>
+                Ask SwarmShield's AI assistant anything about the live defense
+              </span>
+            </div>
+            <QueryEngine messages={queryMsgs} setMessages={setQueryMsgs}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
