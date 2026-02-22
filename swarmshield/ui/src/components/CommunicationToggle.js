@@ -77,8 +77,8 @@ export default function CommunicationToggle({ selectedAgents, setSelectedAgents 
               className="toggle-switch"
               animate={{
                 backgroundColor: selectedAgents[connection.key]
-                  ? '#ffffff'
-                  : '#555555',
+                  ? '#00ff41'
+                  : 'rgba(0, 50, 25, 0.3)',
               }}
             >
               <motion.div

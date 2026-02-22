@@ -17,33 +17,34 @@
 }
 
 .agent-panel {
-  background: rgba(20, 20, 20, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(0, 255, 65, 0.2);
   border-radius: 12px;
   overflow: hidden;
   backdrop-filter: blur(10px);
   transition: all 0.3s ease;
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.1);
 }
 
 .agent-panel.scout {
-  border-top: 3px solid #a0a0a0;
+  border-top: 3px solid rgba(0, 255, 65, 0.6);
 }
 
 .agent-panel.analyzer {
-  border-top: 3px solid #b8b8b8;
+  border-top: 3px solid rgba(0, 255, 65, 0.5);
 }
 
 .agent-panel.responder {
-  border-top: 3px solid #909090;
+  border-top: 3px solid rgba(0, 255, 65, 0.7);
 }
 
 .agent-panel.evolver {
-  border-top: 3px solid #c0c0c0;
+  border-top: 3px solid rgba(0, 255, 65, 0.4);
 }
 
 .agent-panel:hover {
-  border-color: rgba(255, 255, 255, 0.4);
-  box-shadow: 0 8px 32px rgba(255, 255, 255, 0.15);
+  border-color: rgba(0, 255, 65, 0.5);
+  box-shadow: 0 0 30px rgba(0, 255, 65, 0.3), inset 0 0 20px rgba(0, 255, 65, 0.05);
 }
 
 .agent-header {
@@ -52,14 +53,15 @@
   align-items: center;
   gap: 15px;
   padding: 20px;
-  background: rgba(100, 100, 100, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 255, 65, 0.1);
+  border-bottom: 2px solid rgba(0, 255, 65, 0.2);
   cursor: pointer;
   transition: all 0.3s ease;
 }
 
 .agent-header:hover {
-  background: rgba(100, 100, 100, 0.15);
+  background: rgba(0, 255, 65, 0.15);
+  box-shadow: inset 0 0 15px rgba(0, 255, 65, 0.08);
 }
 
 .agent-title {
@@ -76,6 +78,9 @@
 .agent-title h4 {
   margin: 0;
   font-size: 1.2rem;
+  color: #00ff41;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+  font-family: 'Space Mono', monospace;
 }
 
 .agent-status {
@@ -83,10 +88,11 @@
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.7);
+  letter-spacing: 1px;
+  color: rgba(0, 255, 65, 0.8);
+  font-family: 'Space Mono', monospace;
 }
 
 .status-indicator {
@@ -140,18 +146,19 @@
   gap: 10px;
   margin-bottom: 8px;
   padding: 8px;
-  background: rgba(100, 100, 100, 0.08);
+  background: rgba(0, 255, 65, 0.08);
   border-radius: 6px;
-  border-left: 2px solid #cccccc;
+  border-left: 2px solid #00ff41;
   font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(0, 255, 65, 0.9);
 }
 
 .insight-icon {
-  color: #ffffff;
+  color: #00ff41;
   font-weight: 700;
   flex-shrink: 0;
   margin-top: 2px;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
 }
 
 .agent-metrics {
@@ -162,26 +169,30 @@
 }
 
 .metric {
-  background: rgba(100, 100, 100, 0.1);
+  background: rgba(0, 255, 65, 0.08);
   padding: 15px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(0, 255, 65, 0.2);
+  box-shadow: inset 0 0 10px rgba(0, 255, 65, 0.05);
 }
 
 .metric-label {
   display: block;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(0, 255, 65, 0.7);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
   margin-bottom: 5px;
+  font-family: 'Space Mono', monospace;
 }
 
 .metric-value {
   display: block;
   font-size: 1.8rem;
   font-weight: 700;
-  color: #ffffff;
+  color: #00ff41;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.6);
+  font-family: 'Space Mono', monospace;
 }
 
 .communication-status {
@@ -189,13 +200,15 @@
   align-items: center;
   gap: 10px;
   padding: 12px;
-  background: rgba(200, 200, 200, 0.1);
-  border: 1px solid rgba(200, 200, 200, 0.3);
+  background: rgba(0, 255, 65, 0.15);
+  border: 2px solid rgba(0, 255, 65, 0.4);
   border-radius: 6px;
   margin-top: 15px;
   font-size: 0.9rem;
-  font-weight: 500;
-  color: #e0e0e0;
+  font-weight: 600;
+  color: #00ff41;
+  font-family: 'Space Mono', monospace;
+  box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
 }
 
 .comm-arrow {

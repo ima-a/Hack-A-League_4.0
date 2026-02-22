@@ -12,13 +12,14 @@ html, body {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
-  color: #ffffff;
+  font-family: 'Space Mono', 'Courier New', monospace;
+  background: linear-gradient(135deg, #000000 0%, #0a0a0a 50%, #051a0f 100%);
+  color: #00ff41;
   line-height: 1.6;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.3);
 }
 
 #root {
@@ -35,22 +36,25 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(80, 80, 80, 0.1);
+  background: rgba(0, 0, 0, 0.3);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #666666;
+  background: #00ff41;
   border-radius: 4px;
+  box-shadow: 0 0 8px rgba(0, 255, 65, 0.6);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #888888;
+  background: #00ff65;
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.8);
 }
 
 /* Selection */
 ::selection {
-  background: #666666;
-  color: white;
+  background: #00ff41;
+  color: #000000;
+  text-shadow: none;
 }
 
 /* Typography */
@@ -83,19 +87,21 @@ p {
 /* Buttons */
 button {
   cursor: pointer;
-  border: none;
+  border: 2px solid #00ff41;
   padding: 10px 20px;
   border-radius: 6px;
-  font-weight: 500;
+  font-weight: 600;
   transition: all 0.3s ease;
-  background: #666666;
-  color: white;
+  background: rgba(0, 255, 65, 0.1);
+  color: #00ff41;
+  font-family: 'Space Mono', monospace;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
 }
 
 button:hover {
-  background: #888888;
+  background: rgba(0, 255, 65, 0.2);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.6), inset 0 0 10px rgba(0, 255, 65, 0.1);
 }
 
 button:active {
@@ -104,13 +110,15 @@ button:active {
 
 /* Links */
 a {
-  color: #cccccc;
+  color: #00ff41;
   text-decoration: none;
-  transition: color 0.3s ease;
+  transition: all 0.3s ease;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.4);
 }
 
 a:hover {
-  color: #ffffff;
+  color: #00ff65;
+  text-shadow: 0 0 16px rgba(0, 255, 65, 0.8);
 }
 
 /* Utils */

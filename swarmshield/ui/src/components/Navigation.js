@@ -5,9 +5,9 @@ import '../styles/Navigation.css';
 
 export default function Navigation({ currentPage, setCurrentPage, threatLevel }) {
   const getThreatColor = () => {
-    if (threatLevel === 'critical') return '#ffffff';
-    if (threatLevel === 'medium') return '#cccccc';
-    return '#a0a0a0';
+    if (threatLevel === 'critical') return '#00ff41';
+    if (threatLevel === 'medium') return '#00dd33';
+    return '#00bb22';
   };
 
   return (
@@ -35,11 +35,11 @@ export default function Navigation({ currentPage, setCurrentPage, threatLevel })
               boxShadow:
                 threatLevel === 'critical'
                   ? [
-                      '0 0 10px rgba(255,255,255,0.5)',
-                      '0 0 20px rgba(255,255,255,0.8)',
-                      '0 0 10px rgba(255,255,255,0.5)',
+                      '0 0 10px rgba(0,255,65,0.5)',
+                      '0 0 20px rgba(0,255,65,0.8)',
+                      '0 0 10px rgba(0,255,65,0.5)',
                     ]
-                  : `0 0 10px rgba(160,160,160,0.3)`,
+                  : `0 0 10px rgba(0,187,34,0.3)`,
             }}
             transition={{ duration: 1, repeat: threatLevel === 'critical' ? Infinity : 0 }}
             style={{ borderColor: getThreatColor() }}

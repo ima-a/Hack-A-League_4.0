@@ -1,10 +1,11 @@
 .communication-toggle {
   width: 100%;
-  background: rgba(20, 20, 20, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(0, 255, 65, 0.2);
   border-radius: 12px;
   padding: 25px;
   backdrop-filter: blur(10px);
+  box-shadow: 0 0 30px rgba(0, 255, 65, 0.15);
 }
 
 .toggle-header {
@@ -15,10 +16,14 @@
 .toggle-header h3 {
   font-size: 1.5rem;
   margin-bottom: 8px;
+  color: #00ff41;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.6);
+  font-family: 'Space Mono', monospace;
+  letter-spacing: 1px;
 }
 
 .toggle-header p {
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(0, 255, 65, 0.7);
   margin: 0;
 }
 
@@ -34,8 +39,8 @@
   align-items: center;
   gap: 15px;
   padding: 15px;
-  background: rgba(100, 100, 100, 0.08);
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 255, 65, 0.08);
+  border: 2px solid rgba(0, 255, 65, 0.2);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -44,14 +49,14 @@
 }
 
 .connection-card.active {
-  border-color: #ffffff;
-  background: rgba(150, 150, 150, 0.15);
-  box-shadow: 0 0 20px rgba(255, 255, 255, 0.25);
+  border-color: #00ff41;
+  background: rgba(0, 255, 65, 0.15);
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.4), inset 0 0 15px rgba(0, 255, 65, 0.08);
 }
 
 .connection-card:hover {
-  border-color: #ffffff;
-  background: rgba(150, 150, 150, 0.1);
+  border-color: #00ff41;
+  background: rgba(0, 255, 65, 0.12);
 }
 
 .connection-icon {
@@ -66,12 +71,14 @@
 .connection-content h4 {
   margin: 0 0 4px 0;
   font-size: 1rem;
+  color: #00ff41;
+  font-family: 'Space Mono', monospace;
 }
 
 .connection-content p {
   margin: 0;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(0, 255, 65, 0.6);
 }
 
 .toggle-switch {
@@ -82,7 +89,8 @@
   align-items: center;
   padding: 2px;
   cursor: pointer;
-  background: #555555;
+  background: rgba(0, 100, 50, 0.4);
+  border: 1px solid rgba(0, 255, 65, 0.3);
   flex-shrink: 0;
   transition: all 0.3s ease;
 }
@@ -91,13 +99,15 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: white;
+  background: #00ff41;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 0.8rem;
   transition: all 0.3s ease;
+  color: #000000;
+  box-shadow: 0 0 10px rgba(0, 255, 65, 0.6);
 }
 
 .connection-pulse {
@@ -105,7 +115,7 @@
   bottom: 0;
   left: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #ffffff, transparent);
+  background: linear-gradient(90deg, transparent, #00ff41, transparent);
   width: 0%;
 }
 
@@ -121,31 +131,34 @@
   align-items: center;
   justify-content: space-between;
   padding: 15px;
-  background: rgba(100, 100, 100, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 255, 65, 0.1);
+  border: 2px solid rgba(0, 255, 65, 0.2);
   border-radius: 8px;
 }
 
 .info-box.healthy {
-  border-color: rgba(200, 200, 200, 0.3);
-  background: rgba(150, 150, 150, 0.08);
+  border-color: rgba(0, 255, 65, 0.4);
+  background: rgba(0, 255, 65, 0.15);
 }
 
 .info-label {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(0, 255, 65, 0.7);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  font-family: 'Space Mono', monospace;
 }
 
 .info-value {
   font-size: 1.3rem;
   font-weight: 700;
-  color: #ffffff;
+  color: #00ff41;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.6);
+  font-family: 'Space Mono', monospace;
 }
 
 .info-value.healthy {
-  color: #e0e0e0;
+  color: #00ff65;
 }
 
 @media (max-width: 768px) {

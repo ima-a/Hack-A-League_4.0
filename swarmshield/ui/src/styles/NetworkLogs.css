@@ -1,10 +1,11 @@
 .network-logs {
   width: 100%;
-  background: rgba(20, 20, 20, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(0, 255, 65, 0.3);
   border-radius: 12px;
   overflow: hidden;
   backdrop-filter: blur(10px);
+  box-shadow: 0 0 30px rgba(0, 255, 65, 0.15);
 }
 
 .logs-header {
@@ -12,29 +13,35 @@
   justify-content: space-between;
   align-items: center;
   padding: 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(100, 100, 100, 0.1);
+  border-bottom: 2px solid rgba(0, 255, 65, 0.2);
+  background: rgba(0, 255, 65, 0.08);
 }
 
 .logs-header h3 {
   font-size: 1.3rem;
   margin: 0;
+  color: #00ff41;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.6);
+  font-family: 'Space Mono', monospace;
+  letter-spacing: 1px;
 }
 
 .clear-logs-btn {
   background: transparent;
-  color: #cccccc;
+  color: #00ff41;
   padding: 8px;
-  border: 1px solid #cccccc;
+  border: 2px solid #00ff41;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.3s ease;
+  font-family: 'Space Mono', monospace;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
 }
 
 .clear-logs-btn:hover {
-  background: rgba(200, 200, 200, 0.2);
-  color: #ffffff;
-  border-color: #ffffff;
+  background: rgba(0, 255, 65, 0.2);
+  box-shadow: 0 0 15px rgba(0, 255, 65, 0.6);
+  color: #00ff65;
 }
 
 .logs-container {
@@ -47,14 +54,17 @@
   grid-template-columns: 100px 120px 120px 130px 80px 70px 90px;
   gap: 10px;
   padding: 15px 20px;
-  background: rgba(100, 100, 100, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 255, 65, 0.08);
+  border-bottom: 2px solid rgba(0, 255, 65, 0.2);
   font-weight: 600;
   font-size: 0.85rem;
   position: sticky;
   top: 0;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  color: #00ff41;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.4);
+  font-family: 'Space Mono', monospace;
 }
 
 .log-row {
@@ -62,14 +72,17 @@
   grid-template-columns: 100px 120px 120px 130px 80px 70px 90px;
   gap: 10px;
   padding: 12px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(0, 255, 65, 0.1);
   align-items: center;
-  transition: background 0.3s ease;
+  transition: all 0.3s ease;
   font-size: 0.9rem;
+  font-family: 'Space Mono', monospace;
+  color: rgba(0, 255, 65, 0.9);
 }
 
 .log-row:hover {
-  background: rgba(100, 100, 100, 0.08);
+  background: rgba(0, 255, 65, 0.08);
+  box-shadow: inset 0 0 15px rgba(0, 255, 65, 0.1);
 }
 
 .log-col-time {
@@ -117,16 +130,18 @@
 }
 
 .logs-container::-webkit-scrollbar-track {
-  background: rgba(100, 100, 100, 0.08);
+  background: rgba(0, 255, 65, 0.05);
 }
 
 .logs-container::-webkit-scrollbar-thumb {
-  background: #666666;
+  background: #00ff41;
   border-radius: 3px;
+  box-shadow: 0 0 8px rgba(0, 255, 65, 0.6);
 }
 
 .logs-container::-webkit-scrollbar-thumb:hover {
-  background: #888888;
+  background: #00ff65;
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.8);
 }
 
 @media (max-width: 1200px) {

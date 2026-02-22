@@ -5,9 +5,9 @@ import '../styles/AlertSystem.css';
 
 export default function AlertSystem({ threatLevel }) {
   const getAlertColor = () => {
-    if (threatLevel === 'critical') return '#ffffff';
-    if (threatLevel === 'medium') return '#cccccc';
-    return '#a0a0a0';
+    if (threatLevel === 'critical') return '#00ff41';
+    if (threatLevel === 'medium') return '#00dd33';
+    return '#00bb22';
   };
 
   const getAlertMessage = () => {
@@ -30,9 +30,9 @@ export default function AlertSystem({ threatLevel }) {
             threatLevel === 'critical'
               ? {
                   boxShadow: [
-                    '0 0 10px rgba(255,255,255,0.5)',
-                    '0 0 30px rgba(255,255,255,0.8)',
-                    '0 0 10px rgba(255,255,255,0.5)',
+                    '0 0 10px rgba(0,255,65,0.5)',
+                    '0 0 30px rgba(0,255,65,0.8)',
+                    '0 0 10px rgba(0,255,65,0.5)',
                   ],
                 }
               : {}
