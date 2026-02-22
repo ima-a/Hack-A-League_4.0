@@ -1,7 +1,7 @@
 .communication-toggle {
   width: 100%;
-  background: rgba(10, 14, 39, 0.8);
-  border: 1px solid rgba(255, 23, 68, 0.3);
+  background: rgba(20, 20, 20, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
   padding: 25px;
   backdrop-filter: blur(10px);
@@ -34,8 +34,8 @@
   align-items: center;
   gap: 15px;
   padding: 15px;
-  background: rgba(255, 23, 68, 0.05);
-  border: 2px solid rgba(255, 23, 68, 0.2);
+  background: rgba(100, 100, 100, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.15);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -44,14 +44,14 @@
 }
 
 .connection-card.active {
-  border-color: #ff1744;
-  background: rgba(255, 23, 68, 0.15);
-  box-shadow: 0 0 20px rgba(255, 23, 68, 0.3);
+  border-color: #ffffff;
+  background: rgba(150, 150, 150, 0.15);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.25);
 }
 
 .connection-card:hover {
-  border-color: #ff1744;
-  background: rgba(255, 23, 68, 0.1);
+  border-color: #ffffff;
+  background: rgba(150, 150, 150, 0.1);
 }
 
 .connection-icon {
@@ -82,7 +82,7 @@
   align-items: center;
   padding: 2px;
   cursor: pointer;
-  background: #444;
+  background: #555555;
   flex-shrink: 0;
   transition: all 0.3s ease;
 }
@@ -105,7 +105,7 @@
   bottom: 0;
   left: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #ff1744, transparent);
+  background: linear-gradient(90deg, transparent, #ffffff, transparent);
   width: 0%;
 }
 
@@ -121,14 +121,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 15px;
-  background: rgba(255, 23, 68, 0.1);
-  border: 1px solid rgba(255, 23, 68, 0.3);
+  background: rgba(100, 100, 100, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
 }
 
 .info-box.healthy {
-  border-color: rgba(76, 175, 80, 0.3);
-  background: rgba(76, 175, 80, 0.05);
+  border-color: rgba(200, 200, 200, 0.3);
+  background: rgba(150, 150, 150, 0.08);
 }
 
 .info-label {
@@ -141,11 +141,11 @@
 .info-value {
   font-size: 1.3rem;
   font-weight: 700;
-  color: #ff1744;
+  color: #ffffff;
 }
 
 .info-value.healthy {
-  color: #4caf50;
+  color: #e0e0e0;
 }
 
 @media (max-width: 768px) {

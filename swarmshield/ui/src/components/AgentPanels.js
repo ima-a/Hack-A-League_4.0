@@ -63,7 +63,7 @@ export default function AgentPanels({ agents, selectedAgents }) {
                   className="status-indicator"
                   style={{
                     backgroundColor:
-                      agent.status === 'active' ? '#4caf50' : '#ff9800',
+                      agent.status === 'active' ? '#e0e0e0' : '#a0a0a0',
                   }}
                 />
                 {agent.status}

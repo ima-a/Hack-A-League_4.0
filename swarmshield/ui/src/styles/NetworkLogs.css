@@ -1,7 +1,7 @@
 .network-logs {
   width: 100%;
-  background: rgba(10, 14, 39, 0.8);
-  border: 1px solid rgba(255, 23, 68, 0.3);
+  background: rgba(20, 20, 20, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
   overflow: hidden;
   backdrop-filter: blur(10px);
@@ -12,8 +12,8 @@
   justify-content: space-between;
   align-items: center;
   padding: 20px;
-  border-bottom: 1px solid rgba(255, 23, 68, 0.2);
-  background: rgba(255, 23, 68, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(100, 100, 100, 0.1);
 }
 
 .logs-header h3 {
@@ -23,16 +23,18 @@
 
 .clear-logs-btn {
   background: transparent;
-  color: #ff1744;
+  color: #cccccc;
   padding: 8px;
-  border: 1px solid #ff1744;
+  border: 1px solid #cccccc;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.3s ease;
 }
 
 .clear-logs-btn:hover {
-  background: rgba(255, 23, 68, 0.2);
+  background: rgba(200, 200, 200, 0.2);
+  color: #ffffff;
+  border-color: #ffffff;
 }
 
 .logs-container {
@@ -45,8 +47,8 @@
   grid-template-columns: 100px 120px 120px 130px 80px 70px 90px;
   gap: 10px;
   padding: 15px 20px;
-  background: rgba(255, 23, 68, 0.1);
-  border-bottom: 1px solid rgba(255, 23, 68, 0.2);
+  background: rgba(100, 100, 100, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
   font-weight: 600;
   font-size: 0.85rem;
   position: sticky;
@@ -60,14 +62,14 @@
   grid-template-columns: 100px 120px 120px 130px 80px 70px 90px;
   gap: 10px;
   padding: 12px 20px;
-  border-bottom: 1px solid rgba(255, 23, 68, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   align-items: center;
   transition: background 0.3s ease;
   font-size: 0.9rem;
 }
 
 .log-row:hover {
-  background: rgba(255, 23, 68, 0.05);
+  background: rgba(100, 100, 100, 0.08);
 }
 
 .log-col-time {
@@ -98,7 +100,7 @@
   font-weight: 600;
   padding: 4px 8px;
   border-radius: 4px;
-  background: rgba(255, 23, 68, 0.1);
+  background: rgba(100, 100, 100, 0.1);
   text-align: center;
 }
 
@@ -115,16 +117,16 @@
 }
 
 .logs-container::-webkit-scrollbar-track {
-  background: rgba(255, 23, 68, 0.05);
+  background: rgba(100, 100, 100, 0.08);
 }
 
 .logs-container::-webkit-scrollbar-thumb {
-  background: #ff1744;
+  background: #666666;
   border-radius: 3px;
 }
 
 .logs-container::-webkit-scrollbar-thumb:hover {
-  background: #ff5252;
+  background: #888888;
 }
 
 @media (max-width: 1200px) {

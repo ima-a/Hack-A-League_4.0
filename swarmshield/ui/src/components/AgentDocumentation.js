@@ -284,18 +284,22 @@ export default function AgentDocumentation() {
                     <div className="special-content">
                       <p>{agent.mahoragaRef}</p>
                       <motion.div
-                        className="gif-placeholder"
                         initial={{ scale: 0.9, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
                         transition={{ delay: 0.3 }}
                       >
-                        <div className="gif-text">
-                          [Mahoraga Adaptation GIF]
-                          <br />
-                          <small>
-                            Dynamic adaptation to all attack vectors
-                          </small>
-                        </div>
+                        <div
+                          className="tenor-gif-embed"
+                          data-postid="13326845355987467400"
+                          data-share-method="host"
+                          data-aspect-ratio="1.76596"
+                          data-width="100%"
+                        />
+                        <script
+                          type="text/javascript"
+                          async
+                          src="https://media.tenor.com/js/tenor.js"
+                        />
                       </motion.div>
                       <p className="adaptation-note">{agent.adaptation}</p>
                     </div>

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import Dashboard from './components/Dashboard';
 import Navigation from './components/Navigation';
+import HomePage from './pages/HomePage';
+import DocumentationPage from './pages/DocumentationPage';
 import './styles/App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState('home');
   const [threatLevel, setThreatLevel] = useState(Math.random() > 0.7 ? 'critical' : 'normal');
 
   useEffect(() => {
@@ -18,9 +19,10 @@ function App() {
 
   return (
     <div className="app-container">
-      <Navigation activeView={activeView} setActiveView={setActiveView} threatLevel={threatLevel} />
+      <Navigation currentPage={currentPage} setCurrentPage={setCurrentPage} threatLevel={threatLevel} />
       <main className="main-content">
-        {activeView === 'dashboard' && <Dashboard threatLevel={threatLevel} setThreatLevel={setThreatLevel} />}
+        {currentPage === 'home' && <HomePage threatLevel={threatLevel} setThreatLevel={setThreatLevel} />}
+        {currentPage === 'documentation' && <DocumentationPage />}
       </main>
     </div>
   );

@@ -36,20 +36,20 @@ export default function NetworkLogs() {
   const getSeverityColor = (severity) => {
     switch (severity) {
       case 'Critical':
-        return '#ff1744';
+        return '#ffffff';
       case 'High':
-        return '#ff9800';
+        return '#e0e0e0';
       case 'Medium':
-        return '#ffeb3b';
+        return '#cccccc';
       case 'Low':
-        return '#4caf50';
+        return '#a0a0a0';
       default:
         return '#ffffff';
     }
   };
 
   const getStatusColor = (status) => {
-    return status === 'Blocked' ? '#ff1744' : '#ff9800';
+    return status === 'Blocked' ? '#ffffff' : '#cccccc';
   };
 
   return (
