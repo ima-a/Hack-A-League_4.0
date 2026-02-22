@@ -502,6 +502,17 @@ class AnalyzerAgent:
                 llm_insight.get("threat_correlation", "?"),
                 llm_insight.get("lateral_movement_risk", "?"),
             )
+        try:
+            from ..utils.message_bus import get_bus, TOPIC_ANALYZER_ASSESSMENT
+            get_bus().publish(TOPIC_ANALYZER_ASSESSMENT, {
+                "risk_level":      assessment.get("risk_level", "unknown"),
+                "risk_score":      assessment.get("risk_score", 0.0),
+                "recommendations": assessment.get("recommendations", []),
+                "timestamp":       assessment.get("timestamp", ""),
+                "agent_id":        self.name,
+            })
+        except Exception:  # noqa: BLE001
+            pass
         return assessment
 
     def pre_assess_risk(self, tick_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -610,8 +621,99 @@ class AnalyzerAgent:
             len(early_warning_ips), len(preemptive_actions),
         )
 
-        return {
+        pre_result = {
             "preemptive_actions":   preemptive_actions,
             "total_early_warnings": len(early_warning_ips),
             "timestamp":            datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            from ..utils.message_bus import get_bus, TOPIC_ANALYZER_PREASSESS
+            get_bus().publish(TOPIC_ANALYZER_PREASSESS, {
+                **pre_result,
+                "agent_id": self.name,
+            })
+        except Exception:  # noqa: BLE001
+            pass
+        return pre_result
+
+    # ------------------------------------------------------------------
+    # CIC-ML addon layer
+    # ------------------------------------------------------------------
+
+    def cic_screen(self, per_ip: Dict[str, Dict]) -> Dict[str, Any]:
+        """
+        Run the CIC-IDS2017 XGBoost model over per-IP Scout stats.
+
+        This is a **light addon** — it silently returns an empty result if
+        the model is unavailable.  It does NOT replace any part of the main
+        pipeline; it adds a second-opinion layer that the demo wires into
+        the Responder's ``/cic_block`` endpoint.
+
+        Parameters
+        ----------
+        per_ip : dict
+            Mapping of ``{source_ip: {"stats": {...}, ...}}`` as returned
+            by ``ScoutAgent.rolling_tick()["per_ip"]``.
+
+        Returns
+        -------
+        dict
+            {
+              "flagged_ips": [
+                {
+                  "source_ip":         str,
+                  "cic_label":         str,   e.g. "DDoS", "PortScan"
+                  "confidence":        float,
+                  "recommended_action": "block",
+                }
+              ],
+              "screened": int,   # IPs inspected
+              "available": bool, # False if model not loaded
+            }
+        """
+        try:
+            from ..utils.ml_classifier import get_classifier  # noqa: PLC0415
+        except ImportError:
+            return {"flagged_ips": [], "screened": 0, "available": False}
+
+        clf = get_classifier().ensure_loaded()
+        if not clf.available:
+            return {"flagged_ips": [], "screened": 0, "available": False}
+
+        # Map each CIC attack class to the semantically correct response action.
+        # PortScan → honeypot (collect intel); destructive attacks → block;
+        # infiltration/lateral-movement → quarantine (bidirectional isolation).
+        _CIC_ACTION: Dict[str, str] = {
+            "DDoS":                         "block",
+            "Bot":                          "block",
+            "FTP-Patator":                  "block",
+            "SSH-Patator":                  "block",
+            "Web Attack - Brute Force":     "block",
+            "Web Attack - Sql Injection":   "block",
+            "Web Attack - XSS":             "block",
+            "PortScan":                     "redirect_to_honeypot",
+            "Infiltration":                 "quarantine",
+        }
+
+        flagged: List[Dict[str, Any]] = []
+        for source_ip, ip_data in per_ip.items():
+            stats = ip_data.get("stats", {})
+            label, conf, is_attack = clf.predict(stats)
+            if is_attack:
+                action = _CIC_ACTION.get(label, "block")
+                self.logger.info(
+                    "[CIC-ML] %s flagged as %s (conf=%.2f) → %s",
+                    source_ip, label, conf, action,
+                )
+                flagged.append({
+                    "source_ip":          source_ip,
+                    "cic_label":          label,
+                    "confidence":         conf,
+                    "recommended_action": action,
+                })
+
+        return {
+            "flagged_ips": flagged,
+            "screened":    len(per_ip),
+            "available":   True,
         }

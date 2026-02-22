@@ -558,6 +558,18 @@ class Mahoraga:
             result["best_fitness"],
             {k: round(v, 2) for k, v in result["best_thresholds"].items()},
         )
+        try:
+            from ..utils.message_bus import get_bus, TOPIC_MAHORAGA_EVOLVED
+            get_bus().publish(TOPIC_MAHORAGA_EVOLVED, {
+                "best_fitness":         result["best_fitness"],
+                "best_thresholds":      result["best_thresholds"],
+                "confidence_threshold": result["confidence_threshold"],
+                "outcomes_used":        result["outcomes_used"],
+                "generations_run":      result["generations_run"],
+                "timestamp":            result["timestamp"],
+            })
+        except Exception:  # noqa: BLE001
+            pass
         return result
 
     # ------------------------------------------------------------------

@@ -42,10 +42,16 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
+
+from swarmshield.utils.message_bus import (
+    get_bus, reset_bus,
+    TOPIC_SCOUT_TICK, TOPIC_SCOUT_EARLY_WARNING,
+    TOPIC_ANALYZER_PREASSESS, TOPIC_ANALYZER_ASSESSMENT,
+    TOPIC_RESPONDER_ACTION, TOPIC_MAHORAGA_EVOLVED,
+)
 
 # ---------------------------------------------------------------------------
 # Logging — pretty console output for demo
@@ -78,6 +84,113 @@ _BANNER = r"""
               Multi-Agent Cybersecurity Defense System
          [ LIVE DEMO — press Ctrl-C to stop everything ]
 """
+
+
+# ===========================================================================
+# A2A Message Bus — subscriptions for demo visibility + Mahoraga auto-record
+# ===========================================================================
+
+def _setup_a2a_bus() -> None:
+    """
+    Subscribe to every A2A topic so the demo console shows a live feed of
+    inter-agent messages.  Also wires Mahoraga to auto-record every confirmed
+    Responder action so the genetic algorithm trains from real defense cycles.
+
+    Call this once after agents are created and before rolling inference starts.
+    """
+    bus = get_bus()
+
+    # ── Scout tick summary ──────────────────────────────────────────────────
+    def _on_scout_tick(msg: dict) -> None:
+        ew = len(msg.get("early_warnings", []))
+        ct = len(msg.get("confirmed_threats", []))
+        if ew or ct:   # only log ticks that have something interesting
+            logger.info(
+                "[A2A] scout.tick → buffer=%d  ⚠ early=%d  🚨 confirmed=%d",
+                msg.get("buffer_size", 0), ew, ct,
+            )
+    bus.subscribe(TOPIC_SCOUT_TICK, _on_scout_tick)
+
+    # ── Scout early-warning burst ───────────────────────────────────────────
+    def _on_early_warning(msg: dict) -> None:
+        ips = msg.get("ips", [])
+        logger.info(
+            "[A2A] scout.early_warning → %d IP(s) rising: %s",
+            len(ips), ", ".join(ips),
+        )
+    bus.subscribe(TOPIC_SCOUT_EARLY_WARNING, _on_early_warning)
+
+    # ── Analyzer pre-assessment ─────────────────────────────────────────────
+    def _on_pre_assess(msg: dict) -> None:
+        actions = msg.get("preemptive_actions", [])
+        if actions:
+            summary = ", ".join(
+                f"{a['source_ip']}→{a['recommended_action']}" for a in actions
+            )
+            logger.info(
+                "[A2A] analyzer.pre_assessment → %d action(s): %s",
+                len(actions), summary,
+            )
+    bus.subscribe(TOPIC_ANALYZER_PREASSESS, _on_pre_assess)
+
+    # ── Analyzer full risk assessment ───────────────────────────────────────
+    def _on_assess(msg: dict) -> None:
+        logger.info(
+            "[A2A] analyzer.assessment → risk=%s  score=%.3f",
+            msg.get("risk_level", "?"), msg.get("risk_score", 0.0),
+        )
+    bus.subscribe(TOPIC_ANALYZER_ASSESSMENT, _on_assess)
+
+    # ── Responder action (A2A visibility + Mahoraga auto-record) ───────────
+    try:
+        from swarmshield.agents.evolver import Mahoraga
+        _mahoraga = Mahoraga()
+    except Exception:
+        _mahoraga = None
+
+    def _on_responder_action(msg: dict) -> None:
+        action  = msg.get("action", "?")
+        ip      = msg.get("source_ip", "?")
+        success = msg.get("success", False)
+        logger.info(
+            "[A2A] responder.action → %s on %s  success=%s",
+            action, ip, success,
+        )
+        # Auto-record confirmed enforcement actions into Mahoraga's training data
+        if _mahoraga and success and action in (
+            "block", "redirect_to_honeypot", "quarantine", "rate_limit",
+        ):
+            try:
+                _mahoraga.record_outcome(
+                    source_ip           = ip,
+                    stats               = {},   # minimal — enriched by HoneypotBridge
+                    attack_type         = "unknown",
+                    confidence          = 1.0,  # action was taken = confirmed threat
+                    action_taken        = action,
+                    enforcement_success = success,
+                )
+                logger.debug(
+                    "[A2A] Mahoraga auto-recorded outcome for %s (%s)", ip, action
+                )
+            except Exception as exc:
+                logger.debug("[A2A] Mahoraga auto-record skipped: %s", exc)
+    bus.subscribe(TOPIC_RESPONDER_ACTION, _on_responder_action)
+
+    # ── Mahoraga evolution complete ─────────────────────────────────────────
+    def _on_evolved(msg: dict) -> None:
+        logger.info(
+            "[A2A] mahoraga.evolved → fitness=%.4f  outcomes=%d  "
+            "confidence_gate=%.2f",
+            msg.get("best_fitness", 0.0),
+            msg.get("outcomes_used", 0),
+            msg.get("confidence_threshold", 0.0),
+        )
+    bus.subscribe(TOPIC_MAHORAGA_EVOLVED, _on_evolved)
+
+    logger.info(
+        "A2A message bus ready — subscribed to %d topic(s)",
+        len(bus.topics()),
+    )
 
 
 # ===========================================================================
@@ -126,8 +239,10 @@ def _build_early_warning_handler(
 
         # Build a minimal tick_result subset containing ONLY the early-warning
         # IPs so Analyzer doesn't process already-confirmed threats here.
+        # tick_time must be an epoch float (same type as rolling_tick produces)
+        # so that any downstream consumer (e.g. trend computation) doesn't break.
         synthetic_tick = {
-            "tick_time":         datetime.now(timezone.utc).isoformat(),
+            "tick_time":         time.time(),
             "per_ip":            {ip: per_ip[ip] for ip in ips if ip in per_ip},
             "early_warnings":    ips,
             "confirmed_threats": [],
@@ -187,12 +302,17 @@ def _build_early_warning_handler(
 # Tick summary callback
 # ===========================================================================
 
-def _build_tick_handler(responder_url: str) -> Any:
+def _build_tick_handler(responder_url: str, analyzer: Any = None) -> Any:
     """
     Returns the ``on_tick`` callback.
 
     For confirmed threats, posts a ``/verdict`` to the Responder so the
     full reactive pipeline still runs alongside the anticipatory branch.
+
+    If *analyzer* is provided, also runs ``cic_screen()`` on the full
+    per-IP stats dict and posts any ML-flagged IPs to ``/cic_block``.
+    This is the CIC-ML light addon layer — silently skipped when the
+    model is unavailable.
     """
 
     def _on_tick(result: Dict) -> None:
@@ -239,6 +359,33 @@ def _build_tick_handler(responder_url: str) -> Any:
                 )
             except requests.RequestException as exc:
                 logger.error("POST /verdict failed for %s: %s", ip, exc)
+
+        # ── CIC-ML addon layer ──────────────────────────────────────────────
+        per_ip = result.get("per_ip", {})
+        if analyzer is not None and per_ip:
+            try:
+                cic_result = analyzer.cic_screen(per_ip)
+                for flagged in cic_result.get("flagged_ips", []):
+                    source_ip = flagged["source_ip"]
+                    label     = flagged["cic_label"]
+                    conf      = flagged["confidence"]
+                    try:
+                        resp = requests.post(
+                            f"{responder_url}/cic_block",
+                            json    = flagged,
+                            timeout = 10,
+                        )
+                        r = resp.json()
+                        logger.info(
+                            "  [CIC-ML] %s → label=%s conf=%.2f status=%s",
+                            source_ip, label, conf, r.get("status"),
+                        )
+                    except requests.RequestException as exc:
+                        logger.error(
+                            "[CIC-ML] POST /cic_block failed for %s: %s", source_ip, exc,
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[CIC-ML] cic_screen error: %s", exc)
 
     return _on_tick
 
@@ -337,15 +484,19 @@ def main() -> None:
     # ----------------------------------------------------------------
     from swarmshield.agents.scout    import ScoutAgent
     from swarmshield.agents.analyzer import AnalyzerAgent
-
     scout    = ScoutAgent(packet_source=packet_source)
     analyzer = AnalyzerAgent()
+
+    # ----------------------------------------------------------------
+    # 3b. Start A2A message bus subscriptions
+    # ----------------------------------------------------------------
+    _setup_a2a_bus()
 
     # ----------------------------------------------------------------
     # 4. Wire callbacks
     # ----------------------------------------------------------------
     on_early_warning = _build_early_warning_handler(analyzer, responder_url)
-    on_tick          = _build_tick_handler(responder_url)
+    on_tick          = _build_tick_handler(responder_url, analyzer)
 
     # ----------------------------------------------------------------
     # 5. Run rolling inference (blocks until Ctrl-C)

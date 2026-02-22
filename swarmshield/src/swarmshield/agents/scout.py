@@ -258,12 +258,23 @@ def _monte_carlo_estimate(
         top_threat = "normal"
         top_conf   = 0.0
 
+    # Map threat type to the semantically correct response action.
+    # This is the single source of truth consumed by live_demo /verdict payloads.
+    _THREAT_ACTIONS: Dict[str, str] = {
+        "ddos":         "block",
+        "port_scan":    "redirect_to_honeypot",
+        "exfiltration": "quarantine",
+        "normal":       "monitor",
+    }
+    recommended_action = _THREAT_ACTIONS.get(top_threat, "monitor")
+
     return {
         "ddos_confidence":         ddos_conf,
         "port_scan_confidence":    scan_conf,
         "exfiltration_confidence": exfil_conf,
         "top_threat":              top_threat,
         "top_confidence":          top_conf,
+        "recommended_action":      recommended_action,
     }
 
 
@@ -754,13 +765,40 @@ class ScoutAgent:
                     ip, level, cur_conf, pred_conf,
                 )
 
-        return {
+        tick_result = {
             "tick_time":         tick_time,
             "buffer_size":       len(buffered),
             "per_ip":            per_ip,
             "early_warnings":    early_warnings,
             "confirmed_threats": confirmed_threats,
         }
+        # Publish to A2A bus (non-blocking; failures are silently swallowed)
+        try:
+            from ..utils.message_bus import (
+                get_bus, TOPIC_SCOUT_TICK, TOPIC_SCOUT_EARLY_WARNING,
+            )
+            _bus = get_bus()
+            _bus.publish(TOPIC_SCOUT_TICK, {
+                "tick_time":         tick_result["tick_time"],
+                "buffer_size":       tick_result["buffer_size"],
+                "early_warnings":    tick_result["early_warnings"],
+                "confirmed_threats": tick_result["confirmed_threats"],
+                "agent_id":          self.agent_id,
+            })
+            if tick_result["early_warnings"]:
+                _bus.publish(TOPIC_SCOUT_EARLY_WARNING, {
+                    "ips":      tick_result["early_warnings"],
+                    "per_ip":   {
+                        ip: tick_result["per_ip"][ip]
+                        for ip in tick_result["early_warnings"]
+                        if ip in tick_result["per_ip"]
+                    },
+                    "tick_time": tick_result["tick_time"],
+                    "agent_id":  self.agent_id,
+                })
+        except Exception:  # noqa: BLE001
+            pass
+        return tick_result
 
     def run_rolling_inference(
         self,

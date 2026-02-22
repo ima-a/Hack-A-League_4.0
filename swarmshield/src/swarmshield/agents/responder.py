@@ -320,6 +320,19 @@ def log_action(ip: str, action: str, requester: str, success: bool) -> None:
             fh.write(json.dumps(entry) + "\n")
     except OSError as exc:
         logger.error("Could not write to %s: %s", ACTIONS_LOG_FILE, exc)
+    # Publish to A2A bus (non-blocking; import is deferred to avoid circular deps)
+    try:
+        from ..utils.message_bus import get_bus, TOPIC_RESPONDER_ACTION
+        get_bus().publish(TOPIC_RESPONDER_ACTION, {
+            "source_ip": ip,
+            "action":    action,
+            "requester": requester,
+            "success":   success,
+            "timestamp": entry["timestamp"],
+            "agent_id":  AGENT_ID,
+        })
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ===========================================================================
@@ -449,8 +462,11 @@ def decide_and_act(verdict: dict) -> tuple:
         ip, attack_type, recommended, requester,
     )
 
-    # Priority: explicit recommended_action first, then attack_type fallback
-    if recommended == "block" or attack_type == "DDoS":
+    # Priority: explicit recommended_action first, then attack_type fallback.
+    # NOTE: attack_type fallback is intentionally checked AFTER recommended so
+    # that the caller's explicit instruction always wins.  The recommended_action
+    # field in Scout MC results is the authoritative source (see _monte_carlo_estimate).
+    if recommended == "block" or attack_type in ("DDoS", "DoS", "Bot"):
         success = block_ip(ip)
         action  = "block"
 
@@ -458,7 +474,8 @@ def decide_and_act(verdict: dict) -> tuple:
         success = redirect_to_honeypot(ip)
         action  = "redirect_to_honeypot"
 
-    elif recommended == "quarantine" or attack_type == "Ransomware":
+    elif recommended == "quarantine" or attack_type in ("Exfiltration", "Infiltration"):
+        # Exfiltration and host infiltration warrant full bidirectional quarantine
         success = quarantine_host(ip)
         action  = "quarantine"
 
@@ -777,6 +794,78 @@ def preemptive_action_endpoint():
         "action_taken": action,
         "success":      success,
         "gate_reason":  gate_reason,
+        "agent_id":     AGENT_ID,
+        "timestamp":    _now_iso(),
+    }), 200
+
+
+@app.route("/cic_block", methods=["POST"])
+def cic_block_endpoint():
+    """
+    CIC-ML addon: act on an IP flagged by the CIC-IDS2017 XGBoost layer.
+
+    This is a lightweight endpoint — no LLM enrichment, no SHAP, no
+    threat-graph modelling.  The Analyzer's ``cic_screen()`` calls it
+    directly for IPs classified as attacks by the ML model.
+
+    Expected JSON fields
+    --------------------
+    source_ip          : str   — IP address to act on
+    cic_label          : str   — predicted attack class (e.g. "DDoS", "PortScan")
+    confidence         : float — model's class probability [0, 1]
+    recommended_action : str   — "block" | "redirect_to_honeypot" | "quarantine"
+                                 (set by Analyzer.cic_screen; defaults to "block")
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid or missing JSON payload"}), 400
+
+    required = ["source_ip", "cic_label", "confidence"]
+    missing  = [f for f in required if f not in data]
+    if missing:
+        return jsonify({"error": f"Missing fields: {missing}"}), 400
+
+    source_ip         = str(data["source_ip"])
+    cic_label         = str(data["cic_label"])
+    confidence        = float(data.get("confidence", 0.0))
+    recommended_action = str(data.get("recommended_action", "block"))
+
+    # Minimum confidence gate — skip very uncertain predictions
+    MIN_CIC_CONF = float(os.environ.get("CIC_BLOCK_MIN_CONFIDENCE", "0.60"))
+    if confidence < MIN_CIC_CONF:
+        logger.info(
+            "[CIC-ML] %s below confidence threshold (%.2f < %.2f) — skipped",
+            source_ip, confidence, MIN_CIC_CONF,
+        )
+        return jsonify({
+            "status":   "skipped",
+            "reason":   f"confidence {confidence:.2f} < threshold {MIN_CIC_CONF:.2f}",
+            "agent_id": AGENT_ID,
+        }), 200
+
+    # Dispatch to the correct enforcement function based on recommended_action.
+    # PortScan → honeypot; Infiltration → quarantine; everything else → block.
+    if recommended_action == "redirect_to_honeypot":
+        success = redirect_to_honeypot(source_ip)
+        action  = "redirect_to_honeypot"
+    elif recommended_action == "quarantine":
+        success = quarantine_host(source_ip)
+        action  = "quarantine"
+    else:
+        success = block_ip(source_ip)
+        action  = "block"
+
+    logger.info(
+        "[CIC-ML] %s on %s — label=%s conf=%.2f success=%s",
+        action, source_ip, cic_label, confidence, success,
+    )
+    return jsonify({
+        "status":       action if success else "failed",
+        "source_ip":    source_ip,
+        "cic_label":    cic_label,
+        "action_taken": action,
+        "confidence":   confidence,
+        "success":      success,
         "agent_id":     AGENT_ID,
         "timestamp":    _now_iso(),
     }), 200
