@@ -1,7 +1,8 @@
 """
 Patrol Tool
 
-RL-based network patrol and anomaly detection.
+Legacy shim kept for backwards compatibility.
+Actual network monitoring is handled by ScoutAgent in agents/scout.py.
 """
 
 import logging
@@ -11,12 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class PatrolTool:
-    """
-    RL-based Patrol Tool
-    
-    Performs continuous network monitoring and anomaly detection
-    using reinforcement learning models.
-    """
+    """Legacy patrol shim. Use ScoutAgent for real network monitoring."""
     
     def __init__(self):
         """Initialize patrol tool."""
@@ -33,7 +29,6 @@ class PatrolTool:
             Anomaly detection results
         """
         self.logger.info("Executing patrol analysis...")
-        # TODO: Implement RL-based anomaly detection
         return {
             "anomalies_detected": [],
             "confidence_scores": [],

@@ -115,12 +115,7 @@ def format_action_log_entry(
 
 
 class ResponseTool:
-    """
-    Response Tool
-    
-    Deploys mirage honeypots and manages SDN controls
-    for network isolation and deception strategies.
-    """
+    """Legacy response shim. Use responder.py for real network enforcement."""
     
     def __init__(self):
         """Initialize response tool."""
@@ -137,7 +132,6 @@ class ResponseTool:
             Response execution results
         """
         self.logger.info("Executing response plan...")
-        # TODO: Implement mirage + SDN controls
         return {
             "honeypots_deployed": [],
             "segments_isolated": [],

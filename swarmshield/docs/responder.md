@@ -1,86 +1,123 @@
 # Responder Agent
 
 Sources:
-- Service implementation: src/swarmshield/agents/responder.py
-- CrewAI tool wrappers: src/swarmshield/tools/responder_tool.py
-- Thin wrapper class (used by tests): src/swarmshield/agents/__init__.py (ResponderAgent)
+- Service: `src/swarmshield/agents/responder.py` — Flask app on port 5003
+- CrewAI tool wrappers: `src/swarmshield/tools/responder_tool.py`
+- Thin wrapper class (used by tests): `src/swarmshield/agents/__init__.py` (`ResponderAgent`)
 
 ## What it does
 
-The Responder Agent is the third stage in the SwarmShield pipeline. It receives the Analyzer risk assessment and applies the minimum-sufficient defense action for each confirmed threat. It also logs every action and auto-unblocks IPs after a configurable timeout to limit false positive impact.
+The Responder Agent is the third stage in the SwarmShield pipeline. It receives verdicts from the Analyzer (or directly from Scout via the live demo) and applies the minimum-sufficient defense action for each confirmed threat. It also handles pre-emptive actions (rate-limit, elevated-monitor) from the anticipatory pipeline, a CIC-ML addon endpoint, action logging, and automatic IP unblocking after a configurable timeout.
 
 ## Actions supported
 
-    block                  - iptables DROP rule for source IP
-    redirect_to_honeypot   - iptables DNAT rule sending attack traffic to honeypot
-    quarantine             - iptables FORWARD DROP both directions
-    rate_limit             - iptables rate-limit rule
-    monitor                - no enforcement, log only
+    block                - iptables INPUT DROP for source IP
+    redirect_to_honeypot - iptables DNAT rule → HONEYPOT_IP
+    quarantine           - iptables FORWARD DROP both source and destination
+    rate_limit           - iptables hashlimit rule (auto-expires)
+    elevated_monitor     - log-only, no enforcement
+    monitor              - log-only, no enforcement
 
-## Defense decision logic (in apply_defense_actions)
+## Decision logic (`decide_and_act`)
 
-Given a threat with a confidence score:
-- confidence below 0.40:             monitor
-- DDoS or SYN flood detected:        block
-- PortScan detected:                 redirect_to_honeypot
-- Exfiltration detected:             quarantine
-- confidence 0.40 to 0.60 (other):  rate_limit
-- confidence above 0.60 (other):    block
+Priority order (explicit `recommended_action` wins over attack-type fallback):
 
-## Live mode vs dry-run mode
+1. `recommended == "block"` or `attack_type in (DDoS, DoS, Bot)` → **block**
+2. `recommended == "redirect_to_honeypot"` or `attack_type == PortScan` → **redirect_to_honeypot**
+3. `recommended == "quarantine"` or `attack_type in (Exfiltration, Infiltration)` → **quarantine**
+4. `recommended == "rate_limit"` → **rate_limit**
+5. Anything else → **monitor**
 
-LIVE_MODE=false (default): all actions are simulated and logged but no iptables rules are created.
-LIVE_MODE=true:            real iptables rules are applied. Requires root.
+## Flask API
 
-Set LIVE_MODE before importing the package:
+### `POST /verdict`
 
-    LIVE_MODE=true python run.py --live
+Receive a confirmed-threat verdict and execute the action.
 
-## Human approval gate
+Required fields: `source_ip`, `predicted_attack_type`, `confidence`, `shap_explanation`, `recommended_action`, `agent_id`.
 
-When HUMAN_APPROVAL=true, the Responder pauses before each non-monitor action and prompts the operator with the IP, action, threat type, and confidence. The operator can approve (y), reject (n), or abort all remaining actions (a).
+Response: `{status, action_taken, success, agent_id, timestamp}`. Includes `llm_validation` if `XAI_API_KEY` is set.
 
-A second approval layer is provided at the CrewAI task level (Task human_input=True): after the Responder task output is shown, CrewAI pauses and lets the operator review and add instructions before Evolver begins.
+### `POST /preemptive_action`
+
+Receive an anticipatory action request from `Analyzer.pre_assess_risk()`.
+
+Allowed actions: `rate_limit`, `elevated_monitor` only.
+
+All four safety-gate conditions must pass:
+1. Action is whitelisted (rate_limit or elevated_monitor).
+2. `alert_level` is `early_warning`.
+3. `predicted_confidence ≥ PREEMPTIVE_CONFIDENCE_GATE` (default 0.40).
+4. `current_confidence < CONFIRMED_CONFIDENCE_GATE` (default 0.60).
+
+A `gate_rejected` response (HTTP 200) means the gate worked — it is not an error.
+
+Required fields: `source_ip`, `alert_level`, `current_confidence`, `predicted_confidence`, `recommended_action`, `agent_id`.
+
+### `POST /cic_block`
+
+CIC-ML addon endpoint. Act on an IP flagged by `Analyzer.cic_screen()`.
+
+Required fields: `source_ip`, `cic_label`, `confidence`. Optional: `recommended_action`.
+
+Minimum confidence gate: `CIC_BLOCK_MIN_CONFIDENCE` (default 0.60). Predictions below this are skipped.
+
+Dispatch: `recommended_action == redirect_to_honeypot` → honeypot, `quarantine` → quarantine, anything else → block.
+
+### `GET /health`
+
+Liveness probe. Returns `{status: "alive", agent_id}`.
+
+## Auto-unblock thread
+
+A background daemon thread (`_auto_unblock_loop`) runs every `AUTO_UNBLOCK_SECONDS` (default: 300 s). It reads the action log, finds IPs whose last action was `block`, `redirect_to_honeypot`, or `rate_limit` and have exceeded their expiry window, then removes the iptables rule.
+
+- Full blocks and redirects: expire after `AUTO_UNBLOCK_SECONDS`.
+- Rate-limits: expire after `PREEMPTIVE_AUTO_EXPIRE_SECONDS` (default 60 s).
+
+## Live mode vs dry-run
+
+`LIVE_MODE=false` (default): all actions are simulated and logged but no iptables rules are applied.
+
+`LIVE_MODE=true`: real iptables rules are applied. Requires root / `CAP_NET_ADMIN`.
 
 ## Configuration
 
-Environment variables:
-
-    COORDINATOR_IP             - default 192.168.1.100
-    HONEYPOT_IP                - default 192.168.1.99
-    RESPONDER_PORT             - default 5003
-    RESPONDER_ID               - default responder-1
-    AUTO_UNBLOCK_SECONDS       - seconds before auto-unblock (default 300)
-    AUTO_UNBLOCK_MINUTES       - alternative to AUTO_UNBLOCK_SECONDS
-    LIVE_MODE                  - true or false (default false)
-    HUMAN_APPROVAL             - true or false (default false)
-    PREEMPTIVE_CONFIDENCE_GATE - confidence threshold for preemptive actions (default 0.40)
-    CONFIRMED_CONFIDENCE_GATE  - confidence threshold for confirmed actions (default 0.60)
+| Environment variable | Default | Description |
+|---|---|---|
+| `COORDINATOR_IP` | `192.168.1.100` | Coordinator address for action reports |
+| `HONEYPOT_IP` | `192.168.1.99` | DNAT redirect target |
+| `RESPONDER_PORT` | `5003` | Flask listen port |
+| `RESPONDER_ID` | `responder-1` | Agent identifier in logs |
+| `AUTO_UNBLOCK_SECONDS` | `300` | Seconds before blocks are removed |
+| `AUTO_UNBLOCK_MINUTES` | — | Alternative to `AUTO_UNBLOCK_SECONDS` |
+| `LIVE_MODE` | `false` | Apply real iptables rules |
+| `HUMAN_APPROVAL` | `false` | Operator confirmation before each action |
+| `PREEMPTIVE_CONFIDENCE_GATE` | `0.40` | Min predicted confidence for pre-emptive action |
+| `CONFIRMED_CONFIDENCE_GATE` | `0.60` | Min confirmed confidence threshold |
+| `PREEMPTIVE_EXPIRE_SECONDS` | `60` | Auto-expiry for rate-limit rules |
+| `PREEMPTIVE_RATE_LIMIT_PPS` | `100` | Rate-limit threshold (packets/sec) |
+| `CIC_BLOCK_MIN_CONFIDENCE` | `0.60` | Min CIC model confidence to act |
 
 ## Files written
 
-    blocked_ips.txt            - list of currently blocked IPs (live mode)
-    responder_actions.log      - JSON-lines audit trail of all actions taken
+    blocked_ips.txt          - currently blocked IPs (project root)
+    responder_actions.log    - JSON-lines audit trail of all actions
 
-Both files are written at the project root.
+## A2A bus
+
+Every call to `log_action()` publishes to the `responder.action` topic:
+
+    {source_ip, action, requester, success, timestamp, agent_id}
 
 ## CrewAI tools
 
-The Responder exposes three CrewAI @tool functions in tools/responder_tool.py:
+Three `@tool` functions in `tools/responder_tool.py`:
 
-    apply_defense_actions(analyzer_report_json)    - main entry, applies all recommendations
-    block_ip_address(ip_address, reason)           - block a single IP immediately
-    get_active_blocks()                            - list currently blocked IPs
-
-## Flask API (responder.py)
-
-The responder module also runs as a standalone Flask service for direct HTTP-based verdict delivery:
-
-    POST /verdict          - receive a verdict payload and apply the action
-    GET  /health           - liveness probe
-
-Verdict payload fields: source_ip, predicted_attack_type, confidence, recommended_action, agent_id, shap_explanation.
+    apply_defense_actions(analyzer_report_json)  - main entry, applies all recommendations
+    block_ip_address(ip_address, reason)         - block a single IP immediately
+    get_active_blocks()                          - list currently blocked IPs
 
 ## Optional LLM validation
 
-If XAI_API_KEY is set, the Flask /verdict endpoint can validate the deterministic action choice via Grok before execution. The LLM is instructed to approve by default and only suggest overrides when there is a concrete risk. The LLM output is advisory only.
+If `XAI_API_KEY` is set, the `/verdict` endpoint validates the proposed action via Grok before execution. The LLM defaults to approving the action and only suggests an override when there is a concrete risk. The LLM output never blocks execution — it is advisory only.

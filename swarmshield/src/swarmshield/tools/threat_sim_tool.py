@@ -1,7 +1,8 @@
 """
 Threat Simulation Tool
 
-GNN-based threat modeling and Monte Carlo simulation.
+Legacy shim kept for backwards compatibility.
+Actual threat simulation is handled by AnalyzerAgent in agents/analyzer.py.
 """
 
 import logging
@@ -11,12 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class ThreatSimTool:
-    """
-    Threat Simulation Tool
-    
-    Models threats as graphs using GNNs and runs Monte Carlo
-    simulations to predict attack propagation and impact.
-    """
+    """Legacy threat simulation shim. Use AnalyzerAgent for real threat modelling."""
     
     def __init__(self):
         """Initialize threat simulation tool."""
@@ -33,7 +29,6 @@ class ThreatSimTool:
             Simulation results with impact predictions
         """
         self.logger.info("Executing threat simulation...")
-        # TODO: Implement GNN + Monte Carlo simulation
         return {
             "attack_graph": {},
             "simulation_results": [],

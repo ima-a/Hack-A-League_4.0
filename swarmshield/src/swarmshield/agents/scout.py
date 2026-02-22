@@ -209,7 +209,7 @@ def _monte_carlo_estimate(
     -------
     dict with keys:
         ddos_confidence, port_scan_confidence, exfiltration_confidence,
-        top_threat, top_confidence
+        top_threat, top_confidence, recommended_action
     """
     th = {**_DEFAULT_THRESHOLDS, **(thresholds or {})}
 

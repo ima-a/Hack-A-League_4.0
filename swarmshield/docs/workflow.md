@@ -1,98 +1,141 @@
 # SwarmShield Workflow
 
-This document explains how the four agents support each other, where the workflow starts and ends, and why data flows in that order.
+This document explains how the agents work together, where data flows, and why they are ordered as they are.
 
 ## Overview
 
-SwarmShield runs as a sequential multi-agent pipeline orchestrated by CrewAI:
+SwarmShield runs two complementary pipelines simultaneously:
 
-1. Scout - detects network threats via Monte Carlo analysis and produces threat reports.
-2. Analyzer - builds an attack graph from Scout reports, runs propagation simulation, and produces a risk assessment with ranked recommendations.
-3. Responder - applies the minimum-necessary defense actions based on the Analyzer output (block, redirect to honeypot, quarantine, rate-limit, or monitor).
-4. Evolver (Mahoraga) - runs a DEAP genetic algorithm after each defense cycle to evolve Scout detection thresholds, minimizing false positives and false negatives.
+**1. Reactive pipeline** (confirmed threats):
 
-There is also an optional LLM layer (Grok via LLMClient) that attaches structured JSON insights to reports. The LLM never replaces deterministic scores or enforcement decisions.
+    Scout.rolling_tick() → confirmed_threats → POST /verdict → Responder.decide_and_act()
+
+**2. Anticipatory pipeline** (rising threats, before confirmation):
+
+    Scout.rolling_tick() → early_warnings → Analyzer.pre_assess_risk()
+        → POST /preemptive_action → safety gate → rate_limit or elevated_monitor
+
+**CIC-ML addon** (runs every tick as a second-opinion layer):
+
+    Analyzer.cic_screen(per_ip) → POST /cic_block → dispatch by CIC label
+
+The CrewAI crew (run.py) runs a sequential Scout → Analyzer → Responder → Evolver batch cycle as an alternative orchestration path for demo/batch/interactive mode.
 
 ## Entry points
 
-To run the full pipeline:
+    python run.py                     # CrewAI crew: demo/interactive/batch
+    python run_live.py --simulate     # Live demo: synthetic traffic, no root
+    sudo python run_live.py --interface eth0  # Live demo: real packet capture
 
-    python run.py                          # demo mode, 1 iteration, dry-run
-    python run.py --mode interactive       # prompt for scenario, human-in-the-loop
-    python run.py --mode batch --iterations 5
-    python run.py --mode mcp-server        # start MCP server for external tools
+## Data flow
 
-Start and end:
-- Start: Scout captures (or simulates) network traffic and scores each source IP.
-- End: Evolver saves updated thresholds to mahoraga_best_strategy.json and returns the evolved genome.
+### Scout output (feeds Analyzer and Responder)
 
-## Data flow between agents
-
-### Scout output (feeds Analyzer)
-
-One threat report per suspicious source IP:
+One threat report per suspicious source IP (from `detect_anomalies()`):
 
     agent_id, event, source_ip, attack_type, confidence,
-    stats (pps, bps, unique_dest_ips, syn_count, port_entropy),
-    monte_carlo (per-type confidence scores, top_threat, top_confidence),
+    stats: {packets_per_second, bytes_per_second, unique_dest_ips, syn_count, port_entropy},
+    monte_carlo: {ddos_confidence, port_scan_confidence, exfiltration_confidence,
+                  top_threat, top_confidence, recommended_action},
     timestamp
 
-Optionally includes llm_insight if XAI_API_KEY is set.
+`rolling_tick()` produces a tick result consumed directly by the live demo:
+
+    tick_time, buffer_size,
+    per_ip: {<ip>: {stats, monte_carlo, trend, alert_level,
+                    current_confidence, predicted_confidence}},
+    early_warnings: [list of IPs at early_warning level],
+    confirmed_threats: [list of IPs at confirmed level]
 
 ### Analyzer output (feeds Responder)
 
+From `assess_risk()` (reactive):
+
     threat_graph: {nodes, edges, summary}
     simulation_results: list of Monte Carlo propagation trial dicts
-    risk_assessment: {risk_level, risk_score, avg_spread, top_threats, recommendations}
+    risk_assessment: {risk_level, risk_score, avg_spread, max_spread,
+                      top_threats, recommendations, timestamp}
+
+From `pre_assess_risk()` (anticipatory):
+
+    preemptive_actions: [
+      {source_ip, alert_level, current_confidence, predicted_confidence,
+       threat_type, trend_direction, recommended_action, reasoning, agent_id}
+    ],
+    total_early_warnings: int,
+    timestamp: str
+
+From `cic_screen()` (addon):
+
+    flagged_ips: [{source_ip, cic_label, confidence, recommended_action}],
+    screened: int,
+    available: bool
 
 ### Responder output (feeds Evolver)
 
-    actions_applied: list of {ip, action, success, mode, timestamp}
-    summary: string description
+    actions_applied: [{ip, action, success, mode, timestamp}]
+    summary: string
     risk_level: string
     live_mode: bool
     timestamp: string
 
 ### Evolver output (end of cycle)
 
-    best_genome: list of 6 floats
-    best_thresholds: dict mapping threshold names to evolved values
+    best_genome: [500.0, 300.0, 20.0, 3.5, 500000.0, 0.60]  # 6 genes
+    best_thresholds: {threshold_name: value, ...}
     confidence_threshold: float
     best_fitness: float
     generations_run: int
     outcomes_used: int
-    llm_insight: dict or null
+    timestamp: str
 
-## Why the ordering is Scout then Analyzer then Responder then Evolver
+## Why the ordering
 
-Scout is closest to raw signals (packet metadata). It extracts features and assigns confidence scores per source IP without making enforcement decisions.
+**Scout first**: closest to raw signals. Extracts features and assigns Monte Carlo confidence scores without making enforcement decisions.
 
-Analyzer aggregates multiple Scout observations into a graph structure, runs propagation simulation to estimate lateral movement risk, and produces a single ranked action list. This keeps detection logic separate from enforcement logic.
+**Analyzer second**: aggregates multiple Scout observations into a graph structure, runs propagation simulation to estimate lateral movement risk, and produces a single ranked action list. Keeps detection logic separate from enforcement logic.
 
-Responder is the actuator. It converts the Analyzer's recommendations into concrete network enforcement actions. Separating this from detection makes the system safer to test and audit.
+**Responder third**: converts recommendations into iptables rules. Separating enforcement from detection makes the system safer to test and audit.
 
-Evolver runs last because it needs outcome data from the Responder to know whether each defense action was a true positive or false positive. It evolves thresholds for the next cycle.
+**Evolver last**: needs outcome data from the Responder (block/quarantine = true positive; monitor = false positive). Evolves thresholds for the next cycle.
+
+## Pre-emptive safety gate
+
+The anticipatory pipeline enforces four checks before any pre-emptive action executes:
+
+1. **Action whitelist**: only `rate_limit` or `elevated_monitor` are allowed (never block/quarantine on a prediction).
+2. **Alert level**: must be `early_warning`, not `confirmed` (confirmed threats use the reactive path).
+3. **Predicted threshold**: predicted confidence must be ≥ `PREEMPTIVE_CONFIDENCE_GATE` (default 0.40).
+4. **Not-yet-confirmed**: current confidence must be below `CONFIRMED_CONFIDENCE_GATE` (default 0.60).
+
+A `gate_rejected` response (HTTP 200) means the gate is working correctly — it is not an error.
 
 ## A2A message bus
 
-In addition to the CrewAI sequential task pipeline, agents publish events to a shared in-process message bus (no external broker required). Topics:
+Agents publish events to a shared in-process pub/sub bus. No external broker is required.
 
-    scout.tick              - fired after each Scout detection cycle
-    scout.early_warning     - fired when predicted confidence crosses early-warning threshold
-    analyzer.pre_assessment - fired before full risk assessment with preliminary data
-    analyzer.assessment     - fired with final risk level and score
-    responder.action        - fired after each enforcement action (one per IP)
-    mahoraga.evolved        - fired when Evolver completes a GA run
+Topics:
 
-Subscribers (crew.py logging handlers and the TransparencyReporter) receive these events alongside the main task pipeline output.
+    scout.tick              - fired after each rolling_tick() call
+    scout.early_warning     - fired when one or more IPs reach early_warning level
+    analyzer.pre_assessment - fired after pre_assess_risk() completes
+    analyzer.assessment     - fired after assess_risk() completes
+    responder.action        - fired after each enforcement action
+    mahoraga.evolved        - fired when an evolution run completes
+
+The live_demo.py subscribes to all topics for console visibility. The Mahoraga auto-records confirmed Responder actions via the `responder.action` topic to feed the genetic algorithm with real training data. The SwarmShieldCrew wires lightweight log-only subscribers in `_setup_bus_subscriptions()`.
 
 ## Human approval
 
-When HUMAN_APPROVAL=true is set:
+When `HUMAN_APPROVAL=true`:
 
-1. Before each enforcement action in apply_defense_actions, a prompt asks the operator to approve, reject, or abort all remaining actions.
-2. After the Responder task completes, CrewAI pauses and shows the full task output to the operator before Evolver begins (Task level human_input=True).
+1. `apply_defense_actions` (Responder tool) prompts the operator before each non-monitor action (y/n/abort).
+2. The CrewAI Responder task has `human_input=True` — CrewAI pauses after task output and waits for operator feedback before Evolver begins.
 
 ## Transparency
 
-When TRANSPARENCY_CONSOLE=true (default), the TransparencyReporter prints each agent thought, tool call, and result to the terminal in real time. A JSON log is also written to transparency.log (configurable via TRANSPARENCY_LOG_FILE).
+When `TRANSPARENCY_CONSOLE=true` (default), the `TransparencyReporter` prints each agent thought, tool call, and result in real time. A JSON-Lines log is also written to `transparency.log` (path configurable via `TRANSPARENCY_LOG_FILE`).
+
+## HoneypotBridge
+
+A separate Flask server (port 5001, started when `HONEYPOT_BRIDGE_ENABLED=true`) accepts `POST /honeypot_event` callbacks from a partner honeypot. Each event is fed to Mahoraga so the genetic algorithm trains from real attacker ground-truth data rather than only from the auto-recorded Responder actions.

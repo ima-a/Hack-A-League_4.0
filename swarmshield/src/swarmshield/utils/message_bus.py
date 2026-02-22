@@ -39,10 +39,10 @@ Message schemas per topic
 --------------------------
 ``scout.tick``
     buffer_size, early_warnings (list[str]), confirmed_threats (list[str]),
-    per_ip (dict), tick_time (str)
+    per_ip (dict), tick_time (float, epoch seconds)
 
 ``scout.early_warning``
-    ips (list[str]), per_ip (dict), tick_time (str)
+    ips (list[str]), per_ip (dict), tick_time (float, epoch seconds)
 
 ``analyzer.pre_assessment``
     preemptive_actions (list[dict]), total_early_warnings (int), timestamp (str),

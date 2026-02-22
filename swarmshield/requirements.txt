@@ -3,8 +3,8 @@ crewai>=0.80.0
 crewai-tools>=0.14.0
 
 # Runtime dependencies
-flask==2.2.3
-requests==2.31.0
+flask>=3.0.0
+requests>=2.32.0
 openai>=1.0.0      # Grok (xAI) calls — optional; agents degrade gracefully without a key
 deap==1.4.3        # Genetic algorithm (Mahoraga evolver)
 scapy>=2.5.0       # Live packet capture (live_demo.py); optional — demo falls back gracefully
@@ -16,4 +16,4 @@ scikit-learn>=1.3.0
 joblib>=1.3.0
 
 # Testing
-pytest==7.4.0
+pytest>=9.0.0
