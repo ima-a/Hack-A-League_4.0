@@ -1,0 +1,41 @@
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment / secrets
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Node
+**/node_modules/
+
+# Runtime artefacts (legacy root outputs; generated on run)
+blocked_ips.txt
+mahoraga_best_strategy.json
+mahoraga_outcomes.jsonl
+honeypot_events.jsonl
+responder_actions.log
+
+# SwarmShield runtime directory (preferred location)
+swarmshield/runtime/*
+!swarmshield/runtime/.gitkeep
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

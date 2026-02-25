@@ -101,8 +101,8 @@ A background daemon thread (`_auto_unblock_loop`) runs every `AUTO_UNBLOCK_SECON
 
 ## Files written
 
-    blocked_ips.txt          - currently blocked IPs (project root)
-    responder_actions.log    - JSON-lines audit trail of all actions
+    swarmshield/runtime/blocked_ips.txt  - currently blocked IPs (runtime)
+    swarmshield/runtime/responder_actions.log    - JSON-lines audit trail of all actions
 
 ## A2A bus
 

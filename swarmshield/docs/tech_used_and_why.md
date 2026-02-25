@@ -8,7 +8,7 @@ This document explains every major technology, pattern, and library in SwarmShie
 |---|---|
 | Detection must be deterministic | Monte Carlo scoring: repeatable and measurable |
 | LLM enrichment must be optional | Graceful fallback when XAI_API_KEY is absent |
-| Enforcement must be auditable | JSON-lines action log in responder_actions.log |
+| Enforcement must be auditable | JSON-lines action log in swarmshield/runtime/responder_actions.log |
 | Tests must run without root | subprocess.run mocked in pytest; synthetic packet gen in Scout |
 | Agents must stay decoupled | A2A message bus for cross-agent events; CrewAI handles sequential orchestration |
 

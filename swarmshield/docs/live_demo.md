@@ -104,4 +104,4 @@ All six topics are subscribed in `_setup_a2a_bus()`:
 | `responder.action` | action type, IP, success flag |
 | `mahoraga.evolved` | fitness, outcomes used, confidence gate |
 
-The `responder.action` handler also auto-records confirmed enforcement actions into Mahoraga's training data (`mahoraga_outcomes.jsonl`) so the GA evolves from real defense cycles.
+The `responder.action` handler also auto-records confirmed enforcement actions into Mahoraga's training data (`swarmshield/runtime/mahoraga_outcomes.jsonl`) so the GA evolves from real defense cycles.

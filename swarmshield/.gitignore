@@ -78,6 +78,8 @@ Thumbs.db
 
 # Local runtime artifacts
 blocked_ips.txt
+runtime/*
+!runtime/.gitkeep
 
 # Python path helper for tests (kept in repo)
 !conftest.py

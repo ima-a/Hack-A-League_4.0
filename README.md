@@ -72,7 +72,6 @@ SwarmShield is a multi-agent autonomous cybersecurity system that detects, analy
 - Optional **Grok (xAI) LLM enrichment** — schema-constrained JSON outputs, purely advisory
 - **Transparency reporter**: agent thought/tool/result stream to console and JSON-Lines log
 - **HoneypotBridge**: Flask server (port 5001) feeds honeypot events to Mahoraga as training data
-- **DDoS simulator** (`ddos-sim/`) for attack scenario testing using `wrk`
 
 ---
 
@@ -81,11 +80,9 @@ SwarmShield is a multi-agent autonomous cybersecurity system that detects, analy
 ```
 Hack-A-League/
 ├── README.md                        # ← you are here
-├── blocked_ips.txt                  # Runtime: IPs currently blocked by Responder
-├── mahoraga_best_strategy.json      # Runtime: best genome saved by Mahoraga (Evolver)
-├── ddos-sim/
-│   ├── attack.sh                    # wrk-based HTTP load generator for demo/testing
-│   └── Dockerfile                   # Container for the DDoS simulation attacker node
+├── swarmshield/runtime/             # Runtime artifacts (generated on run)
+│   ├── blocked_ips.txt              # IPs currently blocked by Responder (LIVE_MODE)
+│   └── mahoraga_best_strategy.json  # Best genome saved by Mahoraga (Evolver)
 └── swarmshield/                     # Main project package
     ├── README.md                    # Detailed agent + API documentation
     ├── requirements.txt
@@ -156,14 +153,6 @@ python run_live.py --simulate
 
 # Live demo on a real interface
 sudo python run_live.py --interface eth0 --tick 5
-```
-
-### DDoS Simulation (separate attacker terminal)
-
-```bash
-cd ddos-sim
-# Edit TARGET in attack.sh to point at your victim machine
-bash attack.sh
 ```
 
 ---

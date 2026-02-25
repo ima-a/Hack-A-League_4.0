@@ -87,7 +87,10 @@ _MEMORY_BUFFER_SIZE = int(os.environ.get("HONEYPOT_MEMORY_EVENTS", "500"))
 # Project root storage (same convention as the rest of SwarmShield)
 _HERE        = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", ".."))
-HP_LOG_FILE  = os.path.join(PROJECT_ROOT, "honeypot_events.jsonl")
+
+# Runtime artifacts live under swarmshield/runtime/ (kept out of git).
+RUNTIME_DIR = os.path.join(PROJECT_ROOT, "swarmshield", "runtime")
+HP_LOG_FILE = os.path.join(RUNTIME_DIR, "honeypot_events.jsonl")
 
 # ---------------------------------------------------------------------------
 # In-memory event buffer (thread-safe deque)
@@ -151,6 +154,7 @@ def _record_to_mahoraga(event: Dict[str, Any]) -> None:
 def _persist_event(event: Dict[str, Any]) -> None:
     """Append event to the persistent JSONL log on disk."""
     try:
+        os.makedirs(os.path.dirname(HP_LOG_FILE), exist_ok=True)
         with open(HP_LOG_FILE, "a") as fh:
             fh.write(json.dumps(event) + "\n")
     except OSError as exc:

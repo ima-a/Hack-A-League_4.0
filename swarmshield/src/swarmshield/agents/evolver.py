@@ -94,10 +94,13 @@ INDPB         = 0.30
 TOURNAMENT_K  = 3
 
 # Storage
-_HERE            = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT     = os.path.abspath(os.path.join(_HERE, "..", "..", "..", ".."))
-OUTCOMES_FILE    = os.path.join(PROJECT_ROOT, "mahoraga_outcomes.jsonl")
-BEST_GENOME_FILE = os.path.join(PROJECT_ROOT, "mahoraga_best_strategy.json")
+_HERE        = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", ".."))
+
+# Runtime artifacts live under swarmshield/runtime/ (kept out of git).
+RUNTIME_DIR = os.path.join(PROJECT_ROOT, "swarmshield", "runtime")
+OUTCOMES_FILE = os.path.join(RUNTIME_DIR, "mahoraga_outcomes.jsonl")
+BEST_GENOME_FILE = os.path.join(RUNTIME_DIR, "mahoraga_best_strategy.json")
 
 
 # ===========================================================================
@@ -376,6 +379,7 @@ class Mahoraga:
             "was_threat":          was_threat,
         }
         try:
+            os.makedirs(os.path.dirname(self.outcomes_file), exist_ok=True)
             with open(self.outcomes_file, "a") as fh:
                 fh.write(json.dumps(record) + "\n")
             self.logger.debug(
@@ -578,6 +582,7 @@ class Mahoraga:
 
     def _save_best(self, result: Dict[str, Any]) -> None:
         try:
+            os.makedirs(os.path.dirname(self.best_genome_file), exist_ok=True)
             with open(self.best_genome_file, "w") as fh:
                 json.dump(result, fh, indent=2)
             self.logger.info("Best strategy saved → %s", self.best_genome_file)

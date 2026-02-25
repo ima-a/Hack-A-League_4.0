@@ -1,1 +1,0 @@
-# SwarmShield demo package

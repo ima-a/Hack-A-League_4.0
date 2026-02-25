@@ -43,15 +43,15 @@ Population is seeded so individual 0 is always DEFAULT_GENOME, giving the GA a k
 
     Defense cycle ends
         -> record_outcome(source_ip, stats, attack_type, confidence, action_taken)
-           writes to mahoraga_outcomes.jsonl
+           writes to swarmshield/runtime/mahoraga_outcomes.jsonl
         -> evolve() runs DEAP eaSimple for N_GENERATIONS
-           saves best genome to mahoraga_best_strategy.json
+           saves best genome to swarmshield/runtime/mahoraga_best_strategy.json
         -> apply_to_agents(scout_agent) pushes evolved thresholds into ScoutAgent
         -> Next cycle uses evolved thresholds
 
 ### record_outcome
 
-Appends one observation to mahoraga_outcomes.jsonl. The was_threat flag is inferred from action_taken:
+Appends one observation to `swarmshield/runtime/mahoraga_outcomes.jsonl`. The was_threat flag is inferred from action_taken:
 
     block, redirect_to_honeypot, quarantine  ->  was_threat = True
     monitor                                  ->  was_threat = False
@@ -73,10 +73,10 @@ If no real outcomes have been recorded yet, Mahoraga falls back to 12 built-in s
 
 ## Storage files
 
-    mahoraga_outcomes.jsonl        - one JSON line per recorded defense-cycle outcome
-    mahoraga_best_strategy.json    - latest evolve() result (full dict)
+    swarmshield/runtime/mahoraga_outcomes.jsonl        - one JSON line per recorded defense-cycle outcome
+    swarmshield/runtime/mahoraga_best_strategy.json    - latest evolve() result (full dict)
 
-Both files are written at the project root.
+Both files are written under `swarmshield/runtime/`.
 
 ## Optional LLM enrichment
 

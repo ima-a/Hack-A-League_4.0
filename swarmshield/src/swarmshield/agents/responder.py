@@ -35,8 +35,11 @@ AGENT_ID         = os.environ.get("RESPONDER_ID", "responder-1")
 # Paths (project root = four levels up from this file)
 _HERE        = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", ".."))
-BLOCKED_IPS_FILE   = os.path.join(PROJECT_ROOT, "blocked_ips.txt")
-ACTIONS_LOG_FILE   = os.path.join(PROJECT_ROOT, "responder_actions.log")
+
+# Runtime artifacts live under swarmshield/runtime/ (kept out of git).
+RUNTIME_DIR = os.path.join(PROJECT_ROOT, "swarmshield", "runtime")
+BLOCKED_IPS_FILE = os.path.join(RUNTIME_DIR, "blocked_ips.txt")
+ACTIONS_LOG_FILE = os.path.join(RUNTIME_DIR, "responder_actions.log")
 
 # Auto-unblock window (seconds)
 # Env priority: AUTO_UNBLOCK_SECONDS > AUTO_UNBLOCK_MINUTES > default (5 min)
@@ -126,6 +129,7 @@ def block_ip(ip_address: str) -> bool:
     """
     # Persist to file
     try:
+        os.makedirs(os.path.dirname(BLOCKED_IPS_FILE), exist_ok=True)
         with open(BLOCKED_IPS_FILE, "a") as fh:
             fh.write(f"{ip_address}\n")
         logger.info("Added %s to %s", ip_address, BLOCKED_IPS_FILE)
@@ -184,6 +188,7 @@ def unblock_ip(ip_address: str) -> bool:
     """
     # Remove from file
     try:
+        os.makedirs(os.path.dirname(BLOCKED_IPS_FILE), exist_ok=True)
         if os.path.exists(BLOCKED_IPS_FILE):
             with open(BLOCKED_IPS_FILE, "r") as fh:
                 lines = fh.readlines()
