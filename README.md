@@ -84,7 +84,6 @@ Hack-A-League/
 │   ├── blocked_ips.txt              # IPs currently blocked by Responder (LIVE_MODE)
 │   └── mahoraga_best_strategy.json  # Best genome saved by Mahoraga (Evolver)
 └── swarmshield/                     # Main project package
-    ├── README.md                    # Detailed agent + API documentation
     ├── requirements.txt
     ├── run.py                       # CrewAI crew entry point (demo/interactive/batch/mcp)
     ├── run_live.py                  # Live demo entry point (real or simulated traffic)
