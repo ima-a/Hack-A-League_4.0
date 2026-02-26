@@ -56,6 +56,12 @@ SwarmShield is a multi-agent autonomous cybersecurity system that detects, analy
 | **Responder** | Network enforcement | Flask service (port 5003); iptables block / quarantine / redirect / rate-limit with auto-unblock |
 | **Mahoraga (Evolver)** | Threshold evolution | DEAP genetic algorithm; evolves Scout detection thresholds from defence-cycle outcomes |
 
+### Mahoraga (Evolver) — JJK-inspired
+
+Our Evolver is **Mahoraga** — aka the “fine, I’ll just adapt” agent. It watches how well our defenses perform (false positives/negatives, outcomes, etc.) and **evolves better thresholds** for Scout over time.
+
+![Mahoraga (Evolver) adapting](mahoraga-mahora-ga.gif)
+
 ---
 
 ## Key Features

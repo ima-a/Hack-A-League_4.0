@@ -239,9 +239,9 @@ GET    /api/evolution             // Evolver data
 - ✅ Genetic algorithm process
 - ✅ Gene evolution parameters
 - ✅ Fitness function explanation
-- ✅ 🎬 **Mahoraga adaptation GIF reference**
-  - Placeholder for dynamic GIF from:
-  - https://tenor.com/view/mahoraga-malevolent-shrine-adapt-gif-13326845355987467400
+- ✅ 🎬 **Mahoraga adaptation GIF**
+
+![Mahoraga (Evolver) adapting](../../mahoraga-mahora-ga.gif)
 
 ## 🎨 Visual Highlights
 
